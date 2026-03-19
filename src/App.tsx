@@ -16,7 +16,8 @@ import {
   Wallet,
   TrendingDown,
   LogIn,
-  AlertCircle
+  AlertCircle,
+  Calendar
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Card, Button, Input } from "./components/UI";
@@ -181,6 +182,7 @@ function RotaBankApp() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "history">("dashboard");
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [entriesError, setEntriesError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   
@@ -247,6 +249,7 @@ function RotaBankApp() {
   // Firestore Listeners
   useEffect(() => {
     if (!isAuthReady || !user) return;
+    console.log(`Setting up listeners for user: ${user.uid}`);
 
     const expensesQuery = query(
       collection(db, "rotabank_expenses"),
@@ -270,13 +273,20 @@ function RotaBankApp() {
     );
 
     const unsubscribeEntries = onSnapshot(entriesQuery, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Entry[];
+      console.log(`Entries snapshot received. Docs: ${snapshot.docs.length}`);
+      const data = snapshot.docs.map(doc => {
+        const docData = doc.data();
+        console.log(`Entry doc ${doc.id}:`, docData);
+        return {
+          id: doc.id,
+          ...docData
+        };
+      }) as Entry[];
       setEntries(data);
+      setEntriesError(null);
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, "entries");
+      console.error("Entries listener error:", error);
+      setEntriesError("Não foi possível carregar seu saldo do Rota Financeira.");
     });
 
     return () => {
@@ -458,8 +468,9 @@ function RotaBankApp() {
     .filter(e => new Date(e.date).getMonth() === new Date().getMonth())
     .reduce((acc, curr) => acc + curr.amount, 0);
 
-  const totalIncome = entries.reduce((acc, curr) => acc + curr.netAmount, 0);
-  const availableBalance = totalIncome - expenses.reduce((acc, curr) => acc + curr.amount, 0);
+  const totalIncome = entries.reduce((acc, curr) => acc + (Number(curr.netAmount) || 0), 0);
+  const totalExpenses = expenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+  const availableBalance = totalIncome - totalExpenses;
 
   // Last 7 days chart data
   const last7Days = Array.from({ length: 7 }, (_, i) => {
@@ -700,11 +711,35 @@ function RotaBankApp() {
               exit={{ opacity: 0, y: -20 }}
               className="grid grid-cols-1 md:grid-cols-2 gap-6"
             >
-              <BalanceCard 
-                title="Saldo Disponível" 
-                amount={availableBalance} 
-                icon={Wallet} 
-              />
+              <div className="relative">
+                <BalanceCard 
+                  title="Saldo Disponível" 
+                  amount={availableBalance} 
+                  icon={Wallet} 
+                />
+                <p className="mt-2 text-[10px] text-slate-500 text-center italic">
+                  Saldo sincronizado com o Rota Financeira
+                </p>
+                {entriesError && (
+                  <div className="absolute top-2 right-2 group">
+                    <AlertCircle className="w-4 h-4 text-white/60 cursor-help" />
+                    <div className="absolute right-0 top-6 w-48 p-2 bg-slate-900 text-white text-[10px] rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none">
+                      {entriesError}
+                    </div>
+                  </div>
+                )}
+                {entriesError && (
+                  <div className="mt-2 p-2 bg-red-500/20 border border-red-500/50 rounded-lg flex items-center justify-between">
+                    <span className="text-[10px] text-red-200">Erro ao carregar saldo</span>
+                    <button 
+                      onClick={() => window.location.reload()}
+                      className="text-[10px] bg-red-500 text-white px-2 py-0.5 rounded hover:bg-red-600 transition-colors"
+                    >
+                      Tentar Novamente
+                    </button>
+                  </div>
+                )}
+              </div>
               <BalanceCard 
                 title="Total Gasto no Mês" 
                 amount={totalSpentMonth} 
@@ -750,40 +785,83 @@ function RotaBankApp() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="flex flex-col gap-4"
+              className="flex flex-col gap-6"
             >
-              {expenses.length === 0 ? (
-                <div className="text-center py-20">
-                  <History className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                  <p className="text-slate-400 font-medium">Nenhum gasto registrado ainda.</p>
-                </div>
-              ) : (
-                expenses.map((expense) => (
-                  <Card key={expense.id} className="p-6 flex items-center justify-between group">
-                    <div className="flex items-center gap-4">
-                      <div className="p-4 rounded-2xl bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600">
-                        {CATEGORIES.find(c => c.value === expense.category)?.icon || <MoreHorizontal />}
+              <div className="flex flex-col gap-4">
+                <h3 className="text-lg font-black flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-emerald-500" />
+                  Histórico de Gastos
+                </h3>
+                {expenses.length === 0 ? (
+                  <div className="text-center py-20">
+                    <History className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                    <p className="text-slate-400 font-medium">Nenhum gasto registrado ainda.</p>
+                  </div>
+                ) : (
+                  expenses.map((expense) => (
+                    <Card key={expense.id} className="p-6 flex items-center justify-between group">
+                      <div className="flex items-center gap-4">
+                        <div className="p-4 rounded-2xl bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600">
+                          {CATEGORIES.find(c => c.value === expense.category)?.icon || <MoreHorizontal />}
+                        </div>
+                        <div>
+                          <h4 className="font-black">{expense.description || expense.category}</h4>
+                          <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">
+                            {expense.category} • {new Date(expense.date).toLocaleDateString('pt-BR')}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-black">{expense.description || expense.category}</h4>
-                        <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">
-                          {expense.category} • {new Date(expense.date).toLocaleDateString('pt-BR')}
+                      <div className="flex items-center gap-4">
+                        <span className="text-lg font-black text-emerald-600">
+                          - R$ {expense.amount.toFixed(2)}
+                        </span>
+                        <button 
+                          onClick={() => deleteExpense(expense.id)}
+                          className="p-2 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </Card>
+                  ))
+                )}
+              </div>
+
+              {entries.length > 0 ? (
+                <div className="flex flex-col gap-4 mt-4">
+                  <h3 className="text-lg font-black flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-blue-500" />
+                    Entradas (Rota Financeira)
+                  </h3>
+                  <div className="space-y-3 opacity-80">
+                    {entries.map((entry) => (
+                      <Card key={entry.id} className="p-4 flex items-center justify-between bg-blue-50/30 dark:bg-blue-900/10 border-blue-100 dark:border-blue-900/30">
+                        <div className="flex items-center gap-4">
+                          <div className="p-3 bg-blue-100 dark:bg-blue-900/30 text-blue-600 rounded-xl">
+                            <TrendingUp className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="font-bold text-slate-900 dark:text-white">Entrada Sincronizada</p>
+                            <p className="text-xs text-slate-500">ID: {entry.id.substring(0, 8)}...</p>
+                          </div>
+                        </div>
+                        <p className="font-black text-blue-600">
+                          + R$ {entry.netAmount.toFixed(2)}
                         </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <span className="text-lg font-black text-emerald-600">
-                        - R$ {expense.amount.toFixed(2)}
-                      </span>
-                      <button 
-                        onClick={() => deleteExpense(expense.id)}
-                        className="p-2 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    </div>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              ) : !entriesError && (
+                <div className="flex flex-col gap-4 mt-4">
+                  <h3 className="text-lg font-black flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-blue-500" />
+                    Entradas (Rota Financeira)
+                  </h3>
+                  <Card className="text-center py-8 bg-slate-50 dark:bg-slate-900/50 border-dashed">
+                    <p className="text-slate-500 text-sm">Nenhuma entrada de renda encontrada no Rota Financeira.</p>
                   </Card>
-                ))
+                </div>
               )}
             </motion.div>
           )}

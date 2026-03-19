@@ -72,7 +72,8 @@ service cloud.firestore {
     }
 
     match /entries/{entryId} {
-      allow read: if isDocOwner();
+      allow get: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      allow list: if isAuthenticated(); // App uses query(..., where("uid", "==", user.uid))
       // RotaBank only reads entries from Rota Financeira as a mirror.
       // No create/update/delete allowed from this app to prevent data alteration.
     }
