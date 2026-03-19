@@ -41,7 +41,9 @@ import {
   GoogleAuthProvider, 
   onAuthStateChanged, 
   signOut,
-  User
+  User,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
 } from "firebase/auth";
 import { db, auth } from "./firebase";
 
@@ -158,6 +160,13 @@ function RotaBankApp() {
   const [isAdding, setIsAdding] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   
+  // Auth state
+  const [loginMethod, setLoginMethod] = useState<"google" | "email">("google");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
   // Form state
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Outros");
@@ -253,11 +262,36 @@ function RotaBankApp() {
   }, [isAuthReady, user]);
 
   const handleLogin = async () => {
+    setAuthError(null);
     try {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login failed", error);
+      setAuthError("Falha ao entrar com Google.");
+    }
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    try {
+      if (isRegistering) {
+        await createUserWithEmailAndPassword(auth, email, password);
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    } catch (error: any) {
+      console.error("Email auth failed", error);
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        setAuthError("E-mail ou senha incorretos.");
+      } else if (error.code === 'auth/email-already-in-use') {
+        setAuthError("Este e-mail já está em uso.");
+      } else if (error.code === 'auth/weak-password') {
+        setAuthError("A senha deve ter pelo menos 6 caracteres.");
+      } else {
+        setAuthError("Ocorreu um erro na autenticação.");
+      }
     }
   };
 
@@ -336,20 +370,78 @@ function RotaBankApp() {
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50 dark:bg-slate-950">
-        <Card className="max-w-md w-full text-center">
-          <div className="flex justify-center mb-8">
-            {logoUrl && (
-              <img src={logoUrl} alt="Logo" className="w-24 h-24 rounded-3xl shadow-2xl" referrerPolicy="no-referrer" />
-            )}
+        <Card className="max-w-md w-full">
+          <div className="text-center">
+            <div className="flex justify-center mb-8">
+              {logoUrl && (
+                <img src={logoUrl} alt="Logo" className="w-24 h-24 rounded-3xl shadow-2xl" referrerPolicy="no-referrer" />
+              )}
+            </div>
+            <h1 className="text-4xl font-black mb-2">
+              <span className="text-slate-900 dark:text-white">Rota</span>
+              <span className="text-emerald-500">Bank</span>
+            </h1>
+            <p className="text-slate-500 mb-8">Controle seus gastos com inteligência e simplicidade.</p>
           </div>
-          <h1 className="text-4xl font-black mb-2">
-            <span className="text-slate-900 dark:text-white">Rota</span>
-            <span className="text-emerald-500">Bank</span>
-          </h1>
-          <p className="text-slate-500 mb-8">Controle seus gastos com inteligência e simplicidade.</p>
-          <Button onClick={handleLogin} className="w-full flex items-center justify-center gap-3 py-4">
-            <LogIn className="w-5 h-5" /> Entrar com Google
-          </Button>
+
+          {authError && (
+            <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm rounded-2xl flex items-center gap-2">
+              <AlertCircle className="w-4 h-4" />
+              {authError}
+            </div>
+          )}
+
+          {loginMethod === "google" ? (
+            <div className="space-y-4">
+              <Button onClick={handleLogin} className="w-full flex items-center justify-center gap-3 py-4">
+                <LogIn className="w-5 h-5" /> Entrar com Google
+              </Button>
+              <button 
+                onClick={() => setLoginMethod("email")}
+                className="w-full text-sm text-slate-500 hover:text-emerald-600 font-medium transition-colors"
+              >
+                Entrar com E-mail e Senha
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleEmailAuth} className="space-y-4">
+              <Input 
+                label="E-mail" 
+                type="email" 
+                placeholder="seu@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+              <Input 
+                label="Senha" 
+                type="password" 
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+              <Button type="submit" className="w-full py-4">
+                {isRegistering ? "Criar Conta" : "Entrar"}
+              </Button>
+              <div className="flex flex-col gap-2 pt-2">
+                <button 
+                  type="button"
+                  onClick={() => setIsRegistering(!isRegistering)}
+                  className="text-sm text-emerald-600 font-medium hover:underline"
+                >
+                  {isRegistering ? "Já tem conta? Entre aqui" : "Não tem conta? Cadastre-se"}
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setLoginMethod("google")}
+                  className="text-sm text-slate-500 hover:text-emerald-600 font-medium transition-colors"
+                >
+                  Voltar para Login com Google
+                </button>
+              </div>
+            </form>
+          )}
         </Card>
       </div>
     );
