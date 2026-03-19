@@ -50,6 +50,57 @@ import {
 import { db, auth } from "./firebase";
 
 // Types
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 interface Expense {
   id: string;
   amount: number;
@@ -126,15 +177,37 @@ class ErrorBoundary extends React.Component<any, any> {
 
   render() {
     if (this.state.hasError) {
+      let errorMessage = this.state.error || "Erro desconhecido";
+      let isPermissionError = false;
+      try {
+        if (errorMessage && typeof errorMessage === 'string' && errorMessage.startsWith('{')) {
+          const parsed = JSON.parse(errorMessage);
+          errorMessage = `Erro: ${parsed.error} (Operação: ${parsed.operationType}, Caminho: ${parsed.path})`;
+          isPermissionError = true;
+        }
+      } catch {
+        // Not a JSON error
+      }
+
       return (
         <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50 dark:bg-slate-950">
           <Card className="max-w-md w-full text-center">
             <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
             <h2 className="text-xl font-black mb-2">Ops! Algo deu errado.</h2>
             <p className="text-slate-500 text-sm mb-6">
-              {this.state.error.startsWith('{') ? "Erro de permissão no banco de dados." : this.state.error}
+              {isPermissionError ? "Erro de permissão no banco de dados. Verifique se você está logado corretamente." : errorMessage}
             </p>
-            <Button onClick={() => window.location.reload()}>Recarregar App</Button>
+            <div className="flex flex-col gap-3">
+              <Button onClick={() => window.location.reload()}>Recarregar App</Button>
+              <Button variant="ghost" onClick={async () => {
+                try {
+                  await signOut(auth);
+                  window.location.reload();
+                } catch (err) {
+                  console.error("Logout failed", err);
+                }
+              }}>Sair da Conta</Button>
+            </div>
           </Card>
         </div>
       );
@@ -315,17 +388,43 @@ function RotaBankApp() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const handleDeleteAccount = async () => {
-    if (!user) return;
+    if (!user) {
+      alert("Você precisa estar logado para excluir sua conta.");
+      return;
+    }
     setIsDeletingAccount(true);
     try {
       // 1. Delete all expenses from rotabank_expenses
-      const q = query(collection(db, "rotabank_expenses"), where("uid", "==", user.uid));
-      const snapshot = await getDocs(q);
-      const deletePromises = snapshot.docs.map(doc => deleteDoc(doc.ref));
+      const path = "rotabank_expenses";
+      let snapshot;
+      try {
+        const q = query(collection(db, path), where("uid", "==", user.uid));
+        snapshot = await getDocs(q);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, path);
+        return;
+      }
+
+      console.log(`Deleting ${snapshot.docs.length} expenses...`);
+      const deletePromises = snapshot.docs.map(async (doc) => {
+        try {
+          await deleteDoc(doc.ref);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, `${path}/${doc.id}`);
+        }
+      });
       await Promise.all(deletePromises);
 
       // 2. Delete the user account from Firebase Auth
-      await deleteUser(user);
+      try {
+        await deleteUser(user);
+      } catch (error: any) {
+        console.error("Auth deleteUser failed:", error);
+        if (error.code === 'auth/requires-recent-login') {
+          throw error; // Re-throw to be caught by outer catch
+        }
+        throw new Error(`Falha ao remover usuário do sistema: ${error.message}`);
+      }
       
       // 3. Success
       alert("Sua conta e todos os dados do RotaBank foram excluídos com sucesso.");
@@ -334,7 +433,15 @@ function RotaBankApp() {
       if (error.code === 'auth/requires-recent-login') {
         alert("Para excluir sua conta, você precisa ter feito login recentemente. Por favor, saia e entre novamente antes de tentar excluir.");
       } else {
-        alert("Erro ao excluir conta. Tente novamente mais tarde.");
+        // Try to parse JSON error from handleFirestoreError
+        let displayError = error.message;
+        try {
+          const parsed = JSON.parse(error.message);
+          displayError = parsed.error;
+        } catch {
+          // Not a JSON error
+        }
+        alert(`Erro ao excluir conta: ${displayError}. Tente novamente mais tarde.`);
       }
     } finally {
       setIsDeletingAccount(false);
