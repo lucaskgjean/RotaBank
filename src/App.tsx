@@ -34,7 +34,8 @@ import {
   query, 
   where, 
   orderBy,
-  getDocFromServer
+  getDocFromServer,
+  getDocs
 } from "firebase/firestore";
 import { 
   signInWithPopup, 
@@ -43,7 +44,8 @@ import {
   signOut,
   User,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword
+  createUserWithEmailAndPassword,
+  deleteUser
 } from "firebase/auth";
 import { db, auth } from "./firebase";
 
@@ -268,7 +270,11 @@ function RotaBankApp() {
       await signInWithPopup(auth, provider);
     } catch (error: any) {
       console.error("Login failed", error);
-      setAuthError("Falha ao entrar com Google.");
+      if (error.code === 'auth/popup-blocked') {
+        setAuthError("O pop-up de login foi bloqueado pelo seu navegador. Por favor, permita pop-ups para este site.");
+      } else {
+        setAuthError("Falha ao entrar com Google. Tente novamente.");
+      }
     }
   };
 
@@ -284,13 +290,15 @@ function RotaBankApp() {
     } catch (error: any) {
       console.error("Email auth failed", error);
       if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        setAuthError("E-mail ou senha incorretos.");
+        setAuthError("E-mail ou senha incorretos. Se você usou o Google no RotaFinanceira, tente entrar com Google aqui também.");
       } else if (error.code === 'auth/email-already-in-use') {
         setAuthError("Este e-mail já está em uso.");
       } else if (error.code === 'auth/weak-password') {
         setAuthError("A senha deve ter pelo menos 6 caracteres.");
+      } else if (error.code === 'auth/popup-blocked') {
+        setAuthError("O pop-up foi bloqueado. Por favor, permita pop-ups no seu navegador.");
       } else {
-        setAuthError("Ocorreu um erro na autenticação.");
+        setAuthError("Ocorreu um erro na autenticação. Verifique sua conexão.");
       }
     }
   };
@@ -300,6 +308,37 @@ function RotaBankApp() {
       await signOut(auth);
     } catch (error) {
       console.error("Logout failed", error);
+    }
+  };
+
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const handleDeleteAccount = async () => {
+    if (!user) return;
+    setIsDeletingAccount(true);
+    try {
+      // 1. Delete all expenses from rotabank_expenses
+      const q = query(collection(db, "rotabank_expenses"), where("uid", "==", user.uid));
+      const snapshot = await getDocs(q);
+      const deletePromises = snapshot.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deletePromises);
+
+      // 2. Delete the user account from Firebase Auth
+      await deleteUser(user);
+      
+      // 3. Success
+      alert("Sua conta e todos os dados do RotaBank foram excluídos com sucesso.");
+    } catch (error: any) {
+      console.error("Error deleting account:", error);
+      if (error.code === 'auth/requires-recent-login') {
+        alert("Para excluir sua conta, você precisa ter feito login recentemente. Por favor, saia e entre novamente antes de tentar excluir.");
+      } else {
+        alert("Erro ao excluir conta. Tente novamente mais tarde.");
+      }
+    } finally {
+      setIsDeletingAccount(false);
+      setShowDeleteConfirm(false);
     }
   };
 
@@ -473,8 +512,16 @@ function RotaBankApp() {
         <button 
           onClick={handleLogout}
           className="p-4 rounded-2xl text-slate-400 hover:text-red-500 transition-all"
+          title="Sair"
         >
           <LogOut className="w-6 h-6" />
+        </button>
+        <button 
+          onClick={() => setShowDeleteConfirm(true)}
+          className="p-4 rounded-2xl text-slate-400 hover:text-red-600 transition-all"
+          title="Excluir Conta e Dados"
+        >
+          <Trash2 className="w-6 h-6" />
         </button>
       </nav>
 
@@ -506,6 +553,45 @@ function RotaBankApp() {
             </Button>
           </div>
         </header>
+
+        {/* Delete Confirmation Modal */}
+        {showDeleteConfirm && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="max-w-md w-full"
+            >
+              <Card className="p-6 space-y-6 border-red-500/20">
+                <div className="text-center space-y-2">
+                  <div className="w-16 h-16 bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <AlertCircle className="w-8 h-8" />
+                  </div>
+                  <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Excluir Conta?</h2>
+                  <p className="text-slate-500 dark:text-slate-400">
+                    Esta ação é irreversível. Todos os seus gastos no <strong className="text-slate-900 dark:text-white">RotaBank</strong> serão apagados permanentemente. 
+                    Seu saldo no RotaFinanceira não será afetado.
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <Button 
+                    variant="ghost" 
+                    className="flex-1" 
+                    onClick={() => setShowDeleteConfirm(false)}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button 
+                    className="flex-1 bg-red-600 hover:bg-red-700 text-white border-none shadow-lg shadow-red-600/20"
+                    onClick={() => handleDeleteAccount()}
+                  >
+                    {isDeletingAccount ? "Excluindo..." : "Excluir Tudo"}
+                  </Button>
+                </div>
+              </Card>
+            </motion.div>
+          </div>
+        )}
 
         <AnimatePresence mode="wait">
           {activeTab === "dashboard" ? (
