@@ -1,0 +1,39 @@
+{
+  "entities": {
+    "Expense": {
+      "title": "Expense",
+      "description": "A financial expense recorded by the user.",
+      "type": "object",
+      "properties": {
+        "amount": { "type": "number", "description": "The amount spent." },
+        "category": { "type": "string", "description": "The category of the expense." },
+        "description": { "type": "string", "description": "A brief description of the expense." },
+        "date": { "type": "string", "format": "date", "description": "The date of the expense (YYYY-MM-DD)." },
+        "uid": { "type": "string", "description": "The user ID of the owner." }
+      },
+      "required": ["amount", "category", "date", "uid"]
+    },
+    "Entry": {
+      "title": "Entry",
+      "description": "A financial entry (income/revenue) from Rota Financeira.",
+      "type": "object",
+      "properties": {
+        "netAmount": { "type": "number", "description": "The net amount of the entry." },
+        "description": { "type": "string", "description": "A brief description of the entry." },
+        "date": { "type": "string", "format": "date", "description": "The date of the entry." },
+        "uid": { "type": "string", "description": "The user ID of the owner." }
+      },
+      "required": ["netAmount", "uid"]
+    }
+  },
+  "firestore": {
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Collection of user expenses."
+    },
+    "/entries/{entryId}": {
+      "schema": "Entry",
+      "description": "Collection of user entries (income) from Rota Financeira."
+    }
+  }
+}

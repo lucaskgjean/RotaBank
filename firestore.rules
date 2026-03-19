@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: expenses
+    // Document ID: auto-generated
+    // Fields:
+    //   - amount: number (required, > 0)
+    //   - category: string (required, enum)
+    //   - description: string (optional, max 100 chars)
+    //   - date: string (required, ISO 8601 format)
+    //   - uid: string (required, owner UID)
+    //
+    // Collection: entries
+    // Document ID: auto-generated
+    // Fields:
+    //   - netAmount: number (required, > 0)
+    //   - description: string (optional)
+    //   - date: string (optional, ISO 8601 format)
+    //   - uid: string (required, owner UID)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isValidExpense(data) {
+      return data.amount is number && data.amount > 0 &&
+             data.category is string && data.category.size() > 0 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 100)) &&
+             data.date is string && data.date.matches("^\\d{4}-\\d{2}-\\d{2}.*") &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidEntry(data) {
+      return data.netAmount is number && data.netAmount > 0 &&
+             data.uid == request.auth.uid;
+    }
+
+    // Rules
+    match /expenses/{expenseId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && hasRequiredFields(['amount', 'category', 'date', 'uid']) && isValidExpense(request.resource.data) && uidUnchanged();
+      allow update: if isDocOwner() && isValidExpense(request.resource.data) && uidNotModified();
+      allow delete: if isDocOwner();
+    }
+
+    match /entries/{entryId} {
+      allow read: if isDocOwner();
+      // Entries are typically created by Rota Financeira, but we allow read/write for the same user
+      allow create: if isAuthenticated() && hasRequiredFields(['netAmount', 'uid']) && isValidEntry(request.resource.data) && uidUnchanged();
+      allow update: if isDocOwner() && isValidEntry(request.resource.data) && uidNotModified();
+      allow delete: if isDocOwner();
+    }
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+  }
+}
