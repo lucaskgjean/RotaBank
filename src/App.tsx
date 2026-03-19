@@ -116,57 +116,6 @@ interface Entry {
   uid: string;
 }
 
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId: string | undefined;
-    email: string | null | undefined;
-    emailVerified: boolean | undefined;
-    isAnonymous: boolean | undefined;
-    tenantId: string | null | undefined;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
-    },
-    operationType,
-    path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
-}
-
 // Error Boundary Component
 class ErrorBoundary extends React.Component<any, any> {
   state = { hasError: false, error: "" };
@@ -394,54 +343,70 @@ function RotaBankApp() {
     }
     setIsDeletingAccount(true);
     try {
+      console.log("Starting account deletion process...");
+      
       // 1. Delete all expenses from rotabank_expenses
       const path = "rotabank_expenses";
       let snapshot;
       try {
         const q = query(collection(db, path), where("uid", "==", user.uid));
         snapshot = await getDocs(q);
-      } catch (error) {
+        console.log(`Found ${snapshot.docs.length} expenses to delete.`);
+      } catch (error: any) {
+        console.error("Failed to fetch expenses for deletion:", error);
         handleFirestoreError(error, OperationType.GET, path);
         return;
       }
 
-      console.log(`Deleting ${snapshot.docs.length} expenses...`);
-      const deletePromises = snapshot.docs.map(async (doc) => {
-        try {
-          await deleteDoc(doc.ref);
-        } catch (error) {
-          handleFirestoreError(error, OperationType.DELETE, `${path}/${doc.id}`);
-        }
-      });
-      await Promise.all(deletePromises);
+      if (snapshot.docs.length > 0) {
+        const deletePromises = snapshot.docs.map(async (docSnapshot) => {
+          try {
+            await deleteDoc(docSnapshot.ref);
+          } catch (error: any) {
+            console.error(`Failed to delete expense ${docSnapshot.id}:`, error);
+            handleFirestoreError(error, OperationType.DELETE, `${path}/${docSnapshot.id}`);
+          }
+        });
+        await Promise.all(deletePromises);
+        console.log("All expenses deleted successfully.");
+      }
 
       // 2. Delete the user account from Firebase Auth
       try {
+        console.log("Deleting user from Firebase Auth...");
         await deleteUser(user);
+        console.log("User deleted successfully.");
       } catch (error: any) {
         console.error("Auth deleteUser failed:", error);
         if (error.code === 'auth/requires-recent-login') {
-          throw error; // Re-throw to be caught by outer catch
+          throw error; 
         }
-        throw new Error(`Falha ao remover usuário do sistema: ${error.message}`);
+        throw new Error(`Erro no sistema de autenticação: ${error.message || error.code || 'Erro desconhecido'}`);
       }
       
       // 3. Success
-      alert("Sua conta e todos os dados do RotaBank foram excluídos com sucesso.");
+      alert("Sua conta e todos os dados do RotaBank foram excluídos com sucesso. Você será desconectado.");
+      window.location.reload();
     } catch (error: any) {
-      console.error("Error deleting account:", error);
-      if (error.code === 'auth/requires-recent-login') {
-        alert("Para excluir sua conta, você precisa ter feito login recentemente. Por favor, saia e entre novamente antes de tentar excluir.");
+      console.error("Detailed error in handleDeleteAccount:", error);
+      
+      const errorCode = error.code || error.message;
+      
+      if (errorCode === 'auth/requires-recent-login' || String(error).includes('requires-recent-login')) {
+        alert("Segurança: Para excluir sua conta, você precisa ter feito login nos últimos minutos. Por favor, SAIA da conta e ENTRE novamente pelo Google antes de tentar excluir.");
       } else {
-        // Try to parse JSON error from handleFirestoreError
-        let displayError = error.message;
+        let displayError = "Erro desconhecido";
         try {
-          const parsed = JSON.parse(error.message);
-          displayError = parsed.error;
+          if (error.message && error.message.startsWith('{')) {
+            const parsed = JSON.parse(error.message);
+            displayError = `${parsed.error} (${parsed.operationType} em ${parsed.path})`;
+          } else {
+            displayError = error.message || String(error);
+          }
         } catch {
-          // Not a JSON error
+          displayError = error.message || String(error);
         }
-        alert(`Erro ao excluir conta: ${displayError}. Tente novamente mais tarde.`);
+        alert(`Não foi possível excluir a conta.\n\nDetalhe técnico: ${displayError}\n\nPor favor, tente sair e entrar novamente.`);
       }
     } finally {
       setIsDeletingAccount(false);
