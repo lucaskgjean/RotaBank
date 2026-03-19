@@ -356,7 +356,9 @@ function RotaBankApp() {
           console.log(`Found ${snapshot.docs.length} expenses to delete.`);
         } catch (error: any) {
           console.error("Failed to fetch expenses for deletion:", error);
-          handleFirestoreError(error, OperationType.GET, path);
+          setShowForceDelete(true);
+          alert(`Não foi possível ler seus dados para exclusão automática.\n\nDetalhe técnico: ${error.message}\n\nVocê pode tentar "Excluir apenas conta" para remover seu acesso.`);
+          setIsDeletingAccount(false);
           return;
         }
 

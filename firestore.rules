@@ -64,7 +64,8 @@ service cloud.firestore {
 
     // Rules
     match /rotabank_expenses/{expenseId} {
-      allow read: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      allow get: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      allow list: if isAuthenticated(); // App uses query(..., where("uid", "==", user.uid))
       allow create: if isAuthenticated() && hasRequiredFields(['amount', 'category', 'date', 'uid']) && isValidExpense(request.resource.data) && uidUnchanged();
       allow update: if isAuthenticated() && resource.data.uid == request.auth.uid && isValidExpense(request.resource.data) && uidNotModified();
       allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
