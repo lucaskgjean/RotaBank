@@ -5,7 +5,7 @@ service cloud.firestore {
     // Assumed Data Model
     // ===============================================================
     //
-    // Collection: expenses
+    // Collection: rotabank_expenses
     // Document ID: auto-generated
     // Fields:
     //   - amount: number (required, > 0)
@@ -63,7 +63,7 @@ service cloud.firestore {
     }
 
     // Rules
-    match /expenses/{expenseId} {
+    match /rotabank_expenses/{expenseId} {
       allow read: if isDocOwner();
       allow create: if isAuthenticated() && hasRequiredFields(['amount', 'category', 'date', 'uid']) && isValidExpense(request.resource.data) && uidUnchanged();
       allow update: if isDocOwner() && isValidExpense(request.resource.data) && uidNotModified();
@@ -72,10 +72,8 @@ service cloud.firestore {
 
     match /entries/{entryId} {
       allow read: if isDocOwner();
-      // Entries are typically created by Rota Financeira, but we allow read/write for the same user
-      allow create: if isAuthenticated() && hasRequiredFields(['netAmount', 'uid']) && isValidEntry(request.resource.data) && uidUnchanged();
-      allow update: if isDocOwner() && isValidEntry(request.resource.data) && uidNotModified();
-      allow delete: if isDocOwner();
+      // RotaBank only reads entries from Rota Financeira as a mirror.
+      // No create/update/delete allowed from this app to prevent data alteration.
     }
 
     match /users/{userId} {

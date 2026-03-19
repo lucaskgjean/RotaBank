@@ -27,9 +27,9 @@
     }
   },
   "firestore": {
-    "/expenses/{expenseId}": {
+    "/rotabank_expenses/{expenseId}": {
       "schema": "Expense",
-      "description": "Collection of user expenses."
+      "description": "Collection of user expenses for RotaBank."
     },
     "/entries/{entryId}": {
       "schema": "Entry",

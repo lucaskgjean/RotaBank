@@ -225,7 +225,7 @@ function RotaBankApp() {
     if (!isAuthReady || !user) return;
 
     const expensesQuery = query(
-      collection(db, "expenses"),
+      collection(db, "rotabank_expenses"),
       where("uid", "==", user.uid),
       orderBy("date", "desc")
     );
@@ -237,7 +237,7 @@ function RotaBankApp() {
       })) as Expense[];
       setExpenses(data);
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, "expenses");
+      handleFirestoreError(error, OperationType.GET, "rotabank_expenses");
     });
 
     const entriesQuery = query(
@@ -308,7 +308,7 @@ function RotaBankApp() {
     if (!amount || !category || !date || !user) return;
 
     try {
-      await addDoc(collection(db, "expenses"), {
+      await addDoc(collection(db, "rotabank_expenses"), {
         amount: parseFloat(amount),
         category,
         description,
@@ -320,15 +320,15 @@ function RotaBankApp() {
       setDescription("");
       setIsAdding(false);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, "expenses");
+      handleFirestoreError(error, OperationType.WRITE, "rotabank_expenses");
     }
   };
 
   const deleteExpense = async (id: string) => {
     try {
-      await deleteDoc(doc(db, "expenses", id));
+      await deleteDoc(doc(db, "rotabank_expenses", id));
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, "expenses");
+      handleFirestoreError(error, OperationType.DELETE, "rotabank_expenses");
     }
   };
 
