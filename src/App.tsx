@@ -335,8 +335,9 @@ function RotaBankApp() {
 
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showForceDelete, setShowForceDelete] = useState(false);
 
-  const handleDeleteAccount = async () => {
+  const handleDeleteAccount = async (forceAuthOnly = false) => {
     if (!user) {
       alert("Você precisa estar logado para excluir sua conta.");
       return;
@@ -345,30 +346,32 @@ function RotaBankApp() {
     try {
       console.log("Starting account deletion process...");
       
-      // 1. Delete all expenses from rotabank_expenses
-      const path = "rotabank_expenses";
-      let snapshot;
-      try {
-        const q = query(collection(db, path), where("uid", "==", user.uid));
-        snapshot = await getDocs(q);
-        console.log(`Found ${snapshot.docs.length} expenses to delete.`);
-      } catch (error: any) {
-        console.error("Failed to fetch expenses for deletion:", error);
-        handleFirestoreError(error, OperationType.GET, path);
-        return;
-      }
+      if (!forceAuthOnly) {
+        // 1. Delete all expenses from rotabank_expenses
+        const path = "rotabank_expenses";
+        let snapshot;
+        try {
+          const q = query(collection(db, path), where("uid", "==", user.uid));
+          snapshot = await getDocs(q);
+          console.log(`Found ${snapshot.docs.length} expenses to delete.`);
+        } catch (error: any) {
+          console.error("Failed to fetch expenses for deletion:", error);
+          handleFirestoreError(error, OperationType.GET, path);
+          return;
+        }
 
-      if (snapshot.docs.length > 0) {
-        const deletePromises = snapshot.docs.map(async (docSnapshot) => {
-          try {
-            await deleteDoc(docSnapshot.ref);
-          } catch (error: any) {
-            console.error(`Failed to delete expense ${docSnapshot.id}:`, error);
-            handleFirestoreError(error, OperationType.DELETE, `${path}/${docSnapshot.id}`);
-          }
-        });
-        await Promise.all(deletePromises);
-        console.log("All expenses deleted successfully.");
+        if (snapshot.docs.length > 0) {
+          const deletePromises = snapshot.docs.map(async (docSnapshot) => {
+            try {
+              await deleteDoc(docSnapshot.ref);
+            } catch (error: any) {
+              console.error(`Failed to delete expense ${docSnapshot.id}:`, error);
+              handleFirestoreError(error, OperationType.DELETE, `${path}/${docSnapshot.id}`);
+            }
+          });
+          await Promise.all(deletePromises);
+          console.log("All expenses deleted successfully.");
+        }
       }
 
       // 2. Delete the user account from Firebase Auth
@@ -406,7 +409,13 @@ function RotaBankApp() {
         } catch {
           displayError = error.message || String(error);
         }
-        alert(`Não foi possível excluir a conta.\n\nDetalhe técnico: ${displayError}\n\nPor favor, tente sair e entrar novamente.`);
+        
+        if (!forceAuthOnly) {
+          setShowForceDelete(true);
+          alert(`Não foi possível excluir os dados do banco.\n\nDetalhe técnico: ${displayError}\n\nVocê pode tentar "Excluir apenas conta" para remover seu acesso e tentar criar uma nova.`);
+        } else {
+          alert(`Erro crítico ao excluir conta: ${displayError}`);
+        }
       }
     } finally {
       setIsDeletingAccount(false);
@@ -645,20 +654,35 @@ function RotaBankApp() {
                     Seu saldo no RotaFinanceira não será afetado.
                   </p>
                 </div>
-                <div className="flex gap-3">
-                  <Button 
-                    variant="ghost" 
-                    className="flex-1" 
-                    onClick={() => setShowDeleteConfirm(false)}
-                  >
-                    Cancelar
-                  </Button>
-                  <Button 
-                    className="flex-1 bg-red-600 hover:bg-red-700 text-white border-none shadow-lg shadow-red-600/20"
-                    onClick={() => handleDeleteAccount()}
-                  >
-                    {isDeletingAccount ? "Excluindo..." : "Excluir Tudo"}
-                  </Button>
+                <div className="flex flex-col gap-3">
+                  <div className="flex gap-3">
+                    <Button 
+                      variant="ghost" 
+                      className="flex-1" 
+                      onClick={() => {
+                        setShowDeleteConfirm(false);
+                        setShowForceDelete(false);
+                      }}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button 
+                      className="flex-1 bg-red-600 hover:bg-red-700 text-white border-none shadow-lg shadow-red-600/20"
+                      onClick={() => handleDeleteAccount()}
+                    >
+                      {isDeletingAccount ? "Excluindo..." : "Excluir Tudo"}
+                    </Button>
+                  </div>
+                  
+                  {showForceDelete && (
+                    <Button 
+                      variant="secondary"
+                      className="w-full border-red-200 text-red-600 hover:bg-red-50"
+                      onClick={() => handleDeleteAccount(true)}
+                    >
+                      Excluir apenas conta (ignorar erro de dados)
+                    </Button>
+                  )}
                 </div>
               </Card>
             </motion.div>

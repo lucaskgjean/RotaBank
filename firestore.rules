@@ -64,10 +64,10 @@ service cloud.firestore {
 
     // Rules
     match /rotabank_expenses/{expenseId} {
-      allow read: if isDocOwner();
+      allow read: if isAuthenticated() && resource.data.uid == request.auth.uid;
       allow create: if isAuthenticated() && hasRequiredFields(['amount', 'category', 'date', 'uid']) && isValidExpense(request.resource.data) && uidUnchanged();
-      allow update: if isDocOwner() && isValidExpense(request.resource.data) && uidNotModified();
-      allow delete: if isDocOwner();
+      allow update: if isAuthenticated() && resource.data.uid == request.auth.uid && isValidExpense(request.resource.data) && uidNotModified();
+      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
     }
 
     match /entries/{entryId} {
