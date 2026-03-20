@@ -844,14 +844,29 @@ function RotaBankApp() {
                         Mês Atual • Rota Financeira
                       </p>
                     </div>
-                    {entriesError && (
-                      <div className="absolute top-4 right-4 group/err">
-                        <AlertCircle className="w-4 h-4 text-white/60 cursor-help" />
-                        <div className="absolute right-0 top-6 w-48 p-3 bg-zinc-900 text-white text-[10px] rounded-xl opacity-0 group-hover/err:opacity-100 transition-opacity z-10 pointer-events-none shadow-2xl border border-zinc-800">
-                          {entriesError}
+                    {/* Debug Info for Balance */}
+                    <div className="absolute top-4 right-4 flex gap-2">
+                      {entries.length === 0 && !entriesError && (
+                        <div className="group/debug relative">
+                          <AlertCircle className="w-4 h-4 text-white/40 cursor-help" />
+                          <div className="absolute right-0 top-6 w-64 p-4 bg-zinc-900 text-white text-[10px] rounded-xl opacity-0 group-hover/debug:opacity-100 transition-opacity z-20 pointer-events-none shadow-2xl border border-zinc-800 space-y-2">
+                            <p className="font-bold text-emerald-400">Dica de Integração:</p>
+                            <p>Nenhum dado encontrado na coleção <code className="bg-zinc-800 px-1 rounded">entries</code> para o seu ID.</p>
+                            <p>Seu ID: <code className="bg-zinc-800 px-1 rounded break-all">{user.uid}</code></p>
+                            <p>Verifique se o Rota Financeira está salvando os dados nesta mesma coleção e projeto.</p>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                      {entriesError && (
+                        <div className="group/err relative">
+                          <AlertCircle className="w-4 h-4 text-rose-400 cursor-help" />
+                          <div className="absolute right-0 top-6 w-64 p-4 bg-zinc-900 text-white text-[10px] rounded-xl opacity-0 group-hover/err:opacity-100 transition-opacity z-20 pointer-events-none shadow-2xl border border-zinc-800">
+                            <p className="font-bold text-rose-400 mb-1">Erro de Conexão:</p>
+                            {entriesError}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <BalanceCard 
