@@ -61,7 +61,8 @@ import {
   User,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  deleteUser
+  deleteUser,
+  updateProfile
 } from "firebase/auth";
 import { db, auth } from "./firebase";
 
@@ -128,7 +129,9 @@ interface Expense {
 
 interface Entry {
   id: string;
-  netAmount: number;
+  netAmount?: number;
+  valor_liquido?: number;
+  amount?: number;
   uid: string;
   date?: string;
 }
@@ -191,6 +194,25 @@ const CATEGORIES = [
   { value: "Outros", label: "Outros", icon: <MoreHorizontal className="w-4 h-4" /> },
 ];
 
+const parseCurrency = (val: any): number => {
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') {
+    // Remove R$, spaces, and handle thousands separator (.) and decimal separator (,)
+    // Example: "R$ 1.234,56" -> "1234.56"
+    const clean = val.replace(/[R$\s]/g, '');
+    // If there's a comma and a dot, the dot is likely thousands and comma is decimal
+    if (clean.includes(',') && clean.includes('.')) {
+      return parseFloat(clean.replace(/\./g, '').replace(',', '.')) || 0;
+    }
+    // If there's only a comma, it's likely decimal
+    if (clean.includes(',')) {
+      return parseFloat(clean.replace(',', '.')) || 0;
+    }
+    return parseFloat(clean) || 0;
+  }
+  return Number(val) || 0;
+};
+
 function RotaBankApp() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
@@ -206,6 +228,7 @@ function RotaBankApp() {
   const [loginMethod, setLoginMethod] = useState<"google" | "email">("google");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [isRegistering, setIsRegistering] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -218,6 +241,7 @@ function RotaBankApp() {
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      console.log("Auth state changed:", user ? `User: ${user.uid} (${user.email})` : "No user");
       setUser(user);
       setIsAuthReady(true);
       
@@ -225,14 +249,18 @@ function RotaBankApp() {
         // Ensure user document exists in 'users' collection for rules to work correctly
         try {
           const userRef = doc(db, "users", user.uid);
+          console.log("Checking user document at path:", userRef.path);
           const userSnap = await getDocFromServer(userRef);
           if (!userSnap.exists()) {
+            console.log("User document does not exist, creating...");
             await setDoc(userRef, {
-              email: user.email,
-              displayName: user.displayName,
+              email: user.email || "",
+              displayName: user.displayName || "",
               role: 'client'
             });
-            console.log("User document created in Firestore.");
+            console.log("User document created successfully.");
+          } else {
+            console.log("User document already exists:", userSnap.data());
           }
         } catch (error) {
           console.error("Error ensuring user document exists:", error);
@@ -282,46 +310,47 @@ function RotaBankApp() {
 
   // Firestore Listeners
   useEffect(() => {
-    if (!isAuthReady || !user) return;
+    if (!isAuthReady || !user) {
+      console.log("Listeners skipped: auth not ready or no user");
+      return;
+    }
     console.log(`Setting up listeners for user: ${user.uid}`);
 
+    // Expenses Query - Simplified for debugging
     const expensesQuery = query(
       collection(db, "rotabank_expenses"),
-      where("uid", "==", user.uid),
-      orderBy("date", "desc")
+      where("uid", "==", user.uid)
     );
 
     const unsubscribeExpenses = onSnapshot(expensesQuery, (snapshot) => {
-      console.log(`Expenses snapshot received. Docs: ${snapshot.docs.length}`);
+      console.log(`Expenses snapshot received for ${user.uid}. Docs: ${snapshot.docs.length}`);
       const data = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as Expense[];
-      setExpenses(data);
+      // Sort manually if needed, but let's see if it works first
+      setExpenses(data.sort((a, b) => b.date.localeCompare(a.date)));
     }, (error) => {
-      console.error("Expenses listener error:", error);
+      console.error("Expenses listener error details:", error);
       handleFirestoreError(error, OperationType.LIST, "rotabank_expenses");
     });
 
+    // Entries Query (Rota Financeira)
     const entriesQuery = query(
       collection(db, "entries"),
       where("uid", "==", user.uid)
     );
 
     const unsubscribeEntries = onSnapshot(entriesQuery, (snapshot) => {
-      console.log(`Entries snapshot received. Docs: ${snapshot.docs.length}`);
-      const data = snapshot.docs.map(doc => {
-        const docData = doc.data();
-        console.log(`Entry doc ${doc.id}:`, docData);
-        return {
-          id: doc.id,
-          ...docData
-        };
-      }) as Entry[];
+      console.log(`Entries snapshot received for ${user.uid}. Docs: ${snapshot.docs.length}`);
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Entry[];
       setEntries(data);
       setEntriesError(null);
     }, (error) => {
-      console.error("Entries listener error:", error);
+      console.error("Entries listener error details:", error);
       handleFirestoreError(error, OperationType.LIST, "entries");
       setEntriesError("Não foi possível carregar seu saldo do Rota Financeira.");
     });
@@ -352,7 +381,14 @@ function RotaBankApp() {
     setAuthError(null);
     try {
       if (isRegistering) {
-        await createUserWithEmailAndPassword(auth, email, password);
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        // Update user profile with display name
+        if (displayName && userCredential.user) {
+          await updateProfile(userCredential.user, { displayName });
+          
+          // Force update the user state to reflect the new display name
+          setUser({ ...userCredential.user, displayName } as User);
+        }
       } else {
         await signInWithEmailAndPassword(auth, email, password);
       }
@@ -507,21 +543,25 @@ function RotaBankApp() {
 
   const monthlyIncome = entries
     .filter(e => {
-      if (!e.date) return false;
+      if (!e.date) return true;
       const d = new Date(e.date);
+      if (isNaN(d.getTime())) return true;
       return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
     })
-    .reduce((acc, curr) => acc + (Number(curr.netAmount) || 0), 0);
+    .reduce((acc, curr) => acc + parseCurrency(curr.netAmount ?? curr.valor_liquido ?? curr.amount ?? 0), 0);
+
+  const totalIncome = entries.reduce((acc, curr) => acc + parseCurrency(curr.netAmount ?? curr.valor_liquido ?? curr.amount ?? 0), 0);
 
   const monthlyExpenses = expenses
     .filter(e => {
       const d = new Date(e.date);
+      if (isNaN(d.getTime())) return false;
       return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
     })
-    .reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+    .reduce((acc, curr) => acc + parseCurrency(curr.amount), 0);
 
-  const totalExpenses = expenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-  const availableBalance = monthlyIncome - monthlyExpenses;
+  const totalExpenses = expenses.reduce((acc, curr) => acc + parseCurrency(curr.amount), 0);
+  const availableBalance = totalIncome - totalExpenses;
 
   // Last 7 days chart data
   const last7Days = Array.from({ length: 7 }, (_, i) => {
@@ -589,6 +629,16 @@ function RotaBankApp() {
             </div>
           ) : (
             <form onSubmit={handleEmailAuth} className="space-y-4">
+              {isRegistering && (
+                <Input 
+                  label="Nome Completo" 
+                  type="text" 
+                  placeholder="Seu nome"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  required
+                />
+              )}
               <Input 
                 label="E-mail" 
                 type="email" 
@@ -1014,7 +1064,7 @@ function RotaBankApp() {
                             </div>
                           </div>
                           <p className="text-xl font-mono font-medium text-blue-500 tabular-nums">
-                            + R$ {entry.netAmount.toFixed(2)}
+                            + R$ {parseCurrency(entry.netAmount ?? entry.valor_liquido ?? entry.amount ?? 0).toFixed(2)}
                           </p>
                         </Card>
                       </motion.div>

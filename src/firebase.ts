@@ -3,6 +3,8 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
+const firestoreDatabaseId = (firebaseConfig as any).firestoreDatabaseId || "(default)";
+console.log("Initializing Firebase with Project:", firebaseConfig.projectId, "Database:", firestoreDatabaseId);
 let app;
 try {
   app = initializeApp(firebaseConfig);
@@ -17,5 +19,6 @@ try {
   });
 }
 
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app, firestoreDatabaseId);
 export const auth = getAuth(app);
+console.log("Firestore DB initialized. Project:", firebaseConfig.projectId, "Database ID:", firestoreDatabaseId);

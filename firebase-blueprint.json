@@ -24,6 +24,17 @@
         "uid": { "type": "string", "description": "The user ID of the owner." }
       },
       "required": ["netAmount", "uid"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile information.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "description": "User email address." },
+        "displayName": { "type": "string", "description": "User display name." },
+        "role": { "type": "string", "enum": ["admin", "client"], "description": "User role." }
+      },
+      "required": ["email", "role"]
     }
   },
   "firestore": {
@@ -34,6 +45,10 @@
     "/entries/{entryId}": {
       "schema": "Entry",
       "description": "Collection of user entries (income) from Rota Financeira."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user profiles."
     }
   }
 }
