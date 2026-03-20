@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { 
+  Settings,
+  Cloud,
+  CreditCard,
+  BarChart3,
+  Sparkles,
   LayoutDashboard, 
   Plus, 
   History, 
@@ -19,7 +24,12 @@ import {
   AlertCircle,
   Calendar,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  User as UserIcon,
+  QrCode,
+  Eye,
+  EyeOff,
+  PieChart
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -136,6 +146,12 @@ interface Entry {
   date?: string;
 }
 
+interface Balance {
+  totalNetAmount: number;
+  valor_liquido: number;
+  month: string;
+}
+
 // Error Boundary Component
 class ErrorBoundary extends React.Component<any, any> {
   state = { hasError: false, error: "" };
@@ -217,11 +233,13 @@ function RotaBankApp() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [activeTab, setActiveTab] = useState<"dashboard" | "history">("dashboard");
+  const [activeTab, setActiveTab] = useState<"home" | "history" | "transfer" | "cards" | "reports">("home");
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [balance, setBalance] = useState<Balance | null>(null);
   const [entriesError, setEntriesError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [showCardDetails, setShowCardDetails] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   
   // Auth state
@@ -352,12 +370,34 @@ function RotaBankApp() {
     }, (error) => {
       console.error("Entries listener error details:", error);
       handleFirestoreError(error, OperationType.LIST, "entries");
-      setEntriesError("Não foi possível carregar seu saldo do Rota Financeira.");
+      setEntriesError("Não foi possível carregar seu histórico do Rota Financeira.");
+    });
+
+    // Balance Listener (Rota Financeira Consolidated)
+    const balanceRef = doc(db, "balances", user.uid);
+    const unsubscribeBalance = onSnapshot(balanceRef, (docSnap) => {
+      if (docSnap.exists()) {
+        console.log(`Balance snapshot received for ${user.uid}:`, docSnap.data());
+        setBalance(docSnap.data() as Balance);
+      } else {
+        console.log(`No balance document for ${user.uid}, defaulting to 0`);
+        setBalance({
+          totalNetAmount: 0,
+          valor_liquido: 0,
+          month: new Date().toISOString().substring(0, 7)
+        });
+      }
+    }, (error) => {
+      console.error("Balance listener error:", error);
+      // We don't strictly need to handleFirestoreError here if we want a silent fallback, 
+      // but let's log it for debugging.
+      setEntriesError("Não foi possível carregar seu saldo consolidado.");
     });
 
     return () => {
       unsubscribeExpenses();
       unsubscribeEntries();
+      unsubscribeBalance();
     };
   }, [isAuthReady, user]);
 
@@ -541,16 +581,9 @@ function RotaBankApp() {
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
 
-  const monthlyIncome = entries
-    .filter(e => {
-      if (!e.date) return true;
-      const d = new Date(e.date);
-      if (isNaN(d.getTime())) return true;
-      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
-    })
-    .reduce((acc, curr) => acc + parseCurrency(curr.netAmount ?? curr.valor_liquido ?? curr.amount ?? 0), 0);
+  const monthlyIncome = balance?.totalNetAmount ?? 0;
 
-  const totalIncome = entries.reduce((acc, curr) => acc + parseCurrency(curr.netAmount ?? curr.valor_liquido ?? curr.amount ?? 0), 0);
+  const totalIncome = balance?.totalNetAmount ?? 0;
 
   const monthlyExpenses = expenses
     .filter(e => {
@@ -682,90 +715,51 @@ function RotaBankApp() {
   }
 
   return (
-    <div className="min-h-screen pb-24 md:pb-0 md:pl-24 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white transition-colors">
-      {/* Sidebar / Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 w-full h-20 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl md:h-full md:w-24 md:flex-col flex items-center justify-around md:justify-center gap-8 z-50 px-4 md:px-0 border-t md:border-t-0 md:border-r border-slate-200 dark:border-zinc-800 transition-colors duration-300">
-        <motion.button 
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
-          onClick={() => setActiveTab("dashboard")}
-          className={`p-4 rounded-2xl transition-all ${activeTab === 'dashboard' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-slate-400 dark:text-zinc-500 hover:text-emerald-500'}`}
-        >
-          <LayoutDashboard className="w-6 h-6" />
-        </motion.button>
-        <motion.button 
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
-          onClick={() => setActiveTab("history")}
-          className={`p-4 rounded-2xl transition-all ${activeTab === 'history' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-slate-400 dark:text-zinc-500 hover:text-emerald-500'}`}
-        >
-          <History className="w-6 h-6" />
-        </motion.button>
-        <div className="hidden md:block flex-1" />
-        <motion.button 
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
-          onClick={() => setIsDarkMode(!isDarkMode)}
-          className="p-4 rounded-2xl text-slate-400 dark:text-zinc-500 hover:text-emerald-500 transition-all"
-        >
-          {isDarkMode ? <Sun className="w-6 h-6" /> : <Moon className="w-6 h-6" />}
-        </motion.button>
-        <motion.button 
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
-          onClick={handleLogout}
-          className="p-4 rounded-2xl text-slate-400 dark:text-zinc-500 hover:text-rose-500 transition-all"
-          title="Sair"
-        >
-          <LogOut className="w-6 h-6" />
-        </motion.button>
-        <motion.button 
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
-          onClick={() => setShowDeleteConfirm(true)}
-          className="p-4 rounded-2xl text-slate-400 dark:text-zinc-500 hover:text-rose-600 transition-all"
-          title="Excluir Conta e Dados"
-        >
-          <Trash2 className="w-6 h-6" />
-        </motion.button>
-      </nav>
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white transition-colors font-sans selection:bg-indigo-100 dark:selection:bg-indigo-500/30">
+      {/* Header */}
+      <header className="sticky top-0 z-40 h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 flex items-center justify-between px-6 transition-colors duration-300">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-indigo-600 rounded-xl shadow-md flex items-center justify-center text-white">
+            <Wallet className="w-6 h-6" />
+          </div>
+          <h1 className="text-xl font-black tracking-tighter font-display">
+            <span className="text-slate-900 dark:text-white">Rota</span>
+            <span className="text-indigo-600">Bank</span>
+          </h1>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200/50 dark:border-slate-700/50">
+            <div className="relative">
+              <Cloud className="w-4 h-4 text-slate-400 dark:text-slate-500" />
+              <div className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-emerald-500 rounded-full border-2 border-white dark:border-slate-800" />
+            </div>
+            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Sincronizado</span>
+          </div>
+          
+          <button 
+            onClick={() => setIsDarkMode(!isDarkMode)}
+            className="p-2 rounded-xl text-slate-400 dark:text-zinc-500 hover:text-indigo-600 transition-all"
+          >
+            {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          </button>
+
+          <button className="p-2 rounded-xl text-slate-400 dark:text-zinc-500 hover:text-indigo-600 transition-all">
+            <Settings className="w-5 h-5" />
+          </button>
+          
+          <button 
+            onClick={handleLogout}
+            className="p-2 rounded-xl text-slate-400 dark:text-zinc-500 hover:text-rose-500 transition-all"
+            title="Sair"
+          >
+            <LogOut className="w-5 h-5" />
+          </button>
+        </div>
+      </header>
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto p-6 md:p-12">
-        <header className="flex flex-col md:flex-row justify-between items-center gap-6 mb-12">
-          <div className="flex items-center gap-5">
-            {logoUrl && (
-              <motion.div
-                initial={{ scale: 0.8, opacity: 0, rotate: -10 }}
-                animate={{ scale: 1, opacity: 1, rotate: 0 }}
-                className="relative"
-              >
-                <img 
-                  src={logoUrl} 
-                  alt="RotaBank Logo" 
-                  className="w-16 h-16 rounded-3xl shadow-2xl shadow-emerald-500/20 relative z-10"
-                  referrerPolicy="no-referrer"
-                />
-                <div className="absolute inset-0 bg-emerald-500 blur-2xl opacity-20 -z-10" />
-              </motion.div>
-            )}
-            <div>
-              <h1 className="text-4xl font-black tracking-tight leading-none mb-1">
-                <span className="text-slate-900 dark:text-white">Rota</span>
-                <span className="text-emerald-500">Bank</span>
-              </h1>
-              <p className="text-slate-500 dark:text-zinc-500 text-sm font-medium">
-                Olá, <span className="text-slate-900 dark:text-zinc-200">{user.displayName?.split(' ')[0]}</span> 👋
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button onClick={() => setIsAdding(true)} className="flex items-center gap-2 px-8 py-4">
-              <Plus className="w-5 h-5" /> Novo Gasto
-            </Button>
-          </div>
-        </header>
-
+      <main className="max-w-6xl mx-auto p-6 pb-32">
         {/* Delete Confirmation Modal */}
         {showDeleteConfirm && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
@@ -821,9 +815,9 @@ function RotaBankApp() {
         )}
 
         <AnimatePresence mode="wait">
-          {activeTab === "dashboard" ? (
+          {activeTab === "home" ? (
             <motion.div 
-              key="dashboard"
+              key="home"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
@@ -894,8 +888,8 @@ function RotaBankApp() {
                       <AreaChart data={chartData}>
                         <defs>
                           <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                            <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? "#27272a" : "#e2e8f0"} />
@@ -917,14 +911,14 @@ function RotaBankApp() {
                             fontWeight: "bold",
                             color: isDarkMode ? "#f4f4f5" : "#0f172a"
                           }}
-                          itemStyle={{ color: "#10b981" }}
+                          itemStyle={{ color: "#4f46e5" }}
                           formatter={(value: number) => [`R$ ${value.toFixed(2)}`, 'Gasto']}
                           labelFormatter={(label) => new Date(label).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })}
                         />
                         <Area 
                           type="monotone" 
                           dataKey="total" 
-                          stroke="#10b981" 
+                          stroke="#4f46e5" 
                           strokeWidth={3}
                           fillOpacity={1} 
                           fill="url(#colorTotal)" 
@@ -984,7 +978,7 @@ function RotaBankApp() {
                 </Card>
               </div>
             </motion.div>
-          ) : (
+          ) : activeTab === "history" ? (
             <motion.div 
               key="history"
               initial={{ opacity: 0, y: 20 }}
@@ -1088,9 +1082,287 @@ function RotaBankApp() {
                 </div>
               )}
             </motion.div>
+          ) : activeTab === "transfer" ? (
+            <motion.div 
+              key="transfer"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="max-w-xl mx-auto space-y-8"
+            >
+              <div className="text-center space-y-2">
+                <h3 className="text-3xl font-black font-display text-slate-900 dark:text-white">Transferir</h3>
+                <p className="text-slate-500">Envie dinheiro via PIX de forma instantânea.</p>
+              </div>
+
+              <Card className="p-8 space-y-8">
+                <div className="flex gap-4">
+                  <button className="flex-1 p-4 rounded-3xl bg-indigo-600 text-white flex flex-col items-center gap-2 shadow-lg shadow-indigo-600/20">
+                    <QrCode className="w-6 h-6" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Ler QR Code</span>
+                  </button>
+                  <button className="flex-1 p-4 rounded-3xl bg-slate-100 dark:bg-zinc-800 text-slate-900 dark:text-white flex flex-col items-center gap-2 border border-slate-200 dark:border-zinc-700">
+                    <UserIcon className="w-6 h-6" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Contatos</span>
+                  </button>
+                </div>
+
+                <div className="space-y-6">
+                  <Input label="Chave PIX" placeholder="CPF, E-mail, Celular ou Chave Aleatória" />
+                  <Input label="Valor (R$)" type="number" placeholder="0,00" />
+                  <Input label="Mensagem (Opcional)" placeholder="No que você está pensando?" />
+                </div>
+
+                <Button className="w-full py-5 text-lg font-bold shadow-xl shadow-indigo-600/20">
+                  Confirmar Transferência
+                </Button>
+              </Card>
+
+              <div className="p-6 rounded-3xl bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/30 flex items-start gap-4">
+                <AlertCircle className="w-6 h-6 text-amber-600 dark:text-amber-400 shrink-0" />
+                <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
+                  <strong>Atenção:</strong> Verifique os dados do destinatário antes de confirmar. Transferências PIX são liquidadas em poucos segundos e não podem ser canceladas.
+                </p>
+              </div>
+            </motion.div>
+          ) : activeTab === "cards" ? (
+            <motion.div 
+              key="cards"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="max-w-xl mx-auto space-y-8"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-3xl font-black font-display text-slate-900 dark:text-white">Meus Cartões</h3>
+                <Button variant="secondary" className="rounded-full px-6">
+                  <Plus className="w-4 h-4 mr-2" /> Novo Cartão
+                </Button>
+              </div>
+
+              {/* Visual Credit Card */}
+              <motion.div 
+                whileHover={{ scale: 1.02, rotateY: 5 }}
+                className="relative aspect-[1.586/1] w-full bg-gradient-to-br from-indigo-600 via-violet-600 to-purple-700 rounded-[2.5rem] p-8 text-white shadow-2xl shadow-indigo-600/30 overflow-hidden"
+              >
+                {/* Card Pattern Overlay */}
+                <div className="absolute inset-0 opacity-10 pointer-events-none">
+                  <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_50%,#fff_1px,transparent_1px)] bg-[length:20px_20px]" />
+                </div>
+
+                <div className="relative h-full flex flex-col justify-between">
+                  <div className="flex justify-between items-start">
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-60">RotaBank Platinum</p>
+                      <div className="w-12 h-10 bg-amber-400/20 rounded-lg border border-amber-400/30 backdrop-blur-sm" />
+                    </div>
+                    <div className="flex -space-x-3">
+                      <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm" />
+                      <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-4">
+                      <p className="text-2xl font-mono tracking-[0.15em] font-medium">
+                        {showCardDetails ? "4532 8890 1223 4456" : "•••• •••• •••• 4456"}
+                      </p>
+                      <button 
+                        onClick={() => setShowCardDetails(!showCardDetails)}
+                        className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                      >
+                        {showCardDetails ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                      </button>
+                    </div>
+                    
+                    <div className="flex justify-between items-end">
+                      <div className="space-y-1">
+                        <p className="text-[8px] font-bold uppercase tracking-widest opacity-60">Titular</p>
+                        <p className="text-sm font-bold uppercase tracking-widest">{user?.displayName || "Cliente RotaBank"}</p>
+                      </div>
+                      <div className="text-right space-y-1">
+                        <p className="text-[8px] font-bold uppercase tracking-widest opacity-60">Validade</p>
+                        <p className="text-sm font-bold font-mono">12/29</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <Card className="p-6 space-y-2">
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Limite Disponível</p>
+                  <p className="text-xl font-mono font-medium text-emerald-500">R$ 4.250,00</p>
+                </Card>
+                <Card className="p-6 space-y-2">
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Fatura Atual</p>
+                  <p className="text-xl font-mono font-medium text-rose-500">R$ 1.120,45</p>
+                </Card>
+              </div>
+
+              <Card className="p-6 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-slate-100 dark:bg-zinc-800 rounded-2xl">
+                    <Settings className="w-5 h-5 text-slate-500" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-slate-900 dark:text-white">Ajustar Limite</p>
+                    <p className="text-xs text-slate-500">Gerencie seu poder de compra</p>
+                  </div>
+                </div>
+                <Button variant="ghost" className="p-2">
+                  <ArrowUpRight className="w-5 h-5" />
+                </Button>
+              </Card>
+            </motion.div>
+          ) : activeTab === "reports" ? (
+            <motion.div 
+              key="reports"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-8"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-3xl font-black font-display text-slate-900 dark:text-white">Relatórios</h3>
+                <div className="flex gap-2">
+                  <button className="px-4 py-2 bg-indigo-600 text-white rounded-full text-xs font-bold">Mês</button>
+                  <button className="px-4 py-2 bg-slate-100 dark:bg-zinc-800 text-slate-500 rounded-full text-xs font-bold">Ano</button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <Card className="md:col-span-2 p-8">
+                  <div className="flex items-center justify-between mb-8">
+                    <div>
+                      <h4 className="font-bold text-slate-900 dark:text-white">Gastos por Categoria</h4>
+                      <p className="text-xs text-slate-500">Distribuição mensal</p>
+                    </div>
+                    <PieChart className="w-5 h-5 text-indigo-600" />
+                  </div>
+
+                  <div className="h-80 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={CATEGORIES.map(cat => ({
+                        name: cat.label,
+                        total: expenses.filter(e => e.category === cat.value).reduce((acc, curr) => acc + curr.amount, 0)
+                      }))}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? "#27272a" : "#e2e8f0"} />
+                        <XAxis 
+                          dataKey="name" 
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fontSize: 10, fill: isDarkMode ? "#71717a" : "#94a3b8", fontWeight: 600 }}
+                        />
+                        <YAxis hide />
+                        <Tooltip 
+                          cursor={{ fill: isDarkMode ? "#27272a" : "#f1f5f9" }}
+                          contentStyle={{ 
+                            backgroundColor: isDarkMode ? "#18181b" : "#ffffff",
+                            border: "none",
+                            borderRadius: "16px",
+                            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+                            fontSize: "12px",
+                            fontWeight: "bold"
+                          }}
+                        />
+                        <Bar dataKey="total" radius={[8, 8, 0, 0]}>
+                          {CATEGORIES.map((_, index) => (
+                            <Cell key={`cell-${index}`} fill={index === 0 ? "#4f46e5" : index === 1 ? "#10b981" : index === 2 ? "#f59e0b" : index === 3 ? "#ef4444" : "#6366f1"} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                <Card className="p-8 space-y-8">
+                  <h4 className="font-bold text-slate-900 dark:text-white">Maiores Gastos</h4>
+                  <div className="space-y-6">
+                    {expenses
+                      .sort((a, b) => b.amount - a.amount)
+                      .slice(0, 5)
+                      .map((expense, i) => (
+                        <div key={expense.id} className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-zinc-800 flex items-center justify-center text-xs">
+                              {i + 1}
+                            </div>
+                            <span className="text-sm font-medium text-slate-700 dark:text-zinc-300 truncate max-w-[100px]">
+                              {expense.description || expense.category}
+                            </span>
+                          </div>
+                          <span className="text-sm font-mono font-bold text-rose-500">R$ {expense.amount.toFixed(2)}</span>
+                        </div>
+                      ))}
+                  </div>
+                  <Button variant="secondary" className="w-full">Exportar PDF</Button>
+                </Card>
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div 
+              key="placeholder"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex flex-col items-center justify-center py-32 text-center"
+            >
+              <div className="w-20 h-20 bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 rounded-3xl flex items-center justify-center mb-6">
+                <Settings className="w-10 h-10" />
+              </div>
+              <h3 className="text-2xl font-black mb-2">Em Breve</h3>
+              <p className="text-slate-500 dark:text-slate-400 max-w-xs">
+                A funcionalidade de {activeTab === 'transfer' ? 'Transferência' : activeTab === 'cards' ? 'Cartões' : 'Relatórios'} está sendo preparada para você.
+              </p>
+            </motion.div>
           )}
         </AnimatePresence>
       </main>
+
+      {/* Floating Action Button */}
+      <motion.button
+        whileHover={{ scale: 1.1, rotate: 5 }}
+        whileTap={{ scale: 0.9 }}
+        onClick={() => setIsAdding(true)}
+        className="fixed bottom-24 right-6 w-14 h-14 bg-indigo-600 text-white rounded-2xl shadow-xl shadow-indigo-600/30 flex items-center justify-center z-40"
+      >
+        <Sparkles className="w-6 h-6" />
+      </motion.button>
+
+      {/* Bottom Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 h-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur-lg border-t border-slate-100 dark:border-slate-800 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] flex items-center justify-around px-4 z-50 transition-colors duration-300">
+        {[
+          { id: 'home', icon: Home, label: 'Início' },
+          { id: 'history', icon: History, label: 'Extrato' },
+          { id: 'transfer', icon: ArrowUpRight, label: 'Transferir' },
+          { id: 'cards', icon: CreditCard, label: 'Cartões' },
+          { id: 'reports', icon: BarChart3, label: 'Relatórios' },
+        ].map((item) => {
+          const isActive = activeTab === item.id;
+          const Icon = item.icon;
+          
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id as any)}
+              className="relative flex flex-col items-center justify-center gap-1.5 w-16 h-full transition-all"
+            >
+              {isActive && (
+                <motion.div 
+                  layoutId="nav-indicator"
+                  className="absolute top-0 w-1 h-1 bg-indigo-600 rounded-full"
+                />
+              )}
+              <div className={`p-2 rounded-xl transition-all ${isActive ? 'bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500 hover:text-indigo-600'}`}>
+                <Icon className="w-5 h-5" />
+              </div>
+              <span className={`text-[9px] font-black uppercase tracking-tight ${isActive ? 'text-indigo-700 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500'}`}>
+                {item.label}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
 
       {/* Add Modal */}
       <AnimatePresence>
@@ -1109,7 +1381,7 @@ function RotaBankApp() {
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
               className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-4xl p-8 relative z-10 shadow-2xl"
             >
-              <h2 className="text-2xl font-black mb-8">Novo Gasto</h2>
+              <h2 className="text-2xl font-black mb-8 font-display">Novo Gasto</h2>
               <form onSubmit={handleSubmit} className="flex flex-col gap-6">
                 <Input 
                   label="Valor (R$)" 

@@ -35,6 +35,17 @@
         "role": { "type": "string", "enum": ["admin", "client"], "description": "User role." }
       },
       "required": ["email", "role"]
+    },
+    "Balance": {
+      "title": "Balance",
+      "description": "Consolidated balance for a user.",
+      "type": "object",
+      "properties": {
+        "totalNetAmount": { "type": "number", "description": "The total net amount for the month." },
+        "valor_liquido": { "type": "number", "description": "Alias for totalNetAmount." },
+        "month": { "type": "string", "description": "The reference month (YYYY-MM)." }
+      },
+      "required": ["totalNetAmount", "month"]
     }
   },
   "firestore": {
@@ -49,6 +60,10 @@
     "/users/{userId}": {
       "schema": "User",
       "description": "Collection of user profiles."
+    },
+    "/balances/{userId}": {
+      "schema": "Balance",
+      "description": "Consolidated balance for a user."
     }
   }
 }
