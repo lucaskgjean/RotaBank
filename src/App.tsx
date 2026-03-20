@@ -17,9 +17,23 @@ import {
   TrendingDown,
   LogIn,
   AlertCircle,
-  Calendar
+  Calendar,
+  ArrowUpRight,
+  ArrowDownRight
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  Cell
+} from 'recharts';
 import { Card, Button, Input } from "./components/UI";
 import { CustomSelect } from "./components/CustomSelect";
 import { BalanceCard } from "./components/BalanceCard";
@@ -29,6 +43,7 @@ import { generateLogo } from "./services/logoService";
 import { 
   collection, 
   addDoc, 
+  setDoc,
   deleteDoc, 
   doc, 
   onSnapshot, 
@@ -115,6 +130,7 @@ interface Entry {
   id: string;
   netAmount: number;
   uid: string;
+  date?: string;
 }
 
 // Error Boundary Component
@@ -201,9 +217,27 @@ function RotaBankApp() {
 
   // Auth Listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
       setIsAuthReady(true);
+      
+      if (user) {
+        // Ensure user document exists in 'users' collection for rules to work correctly
+        try {
+          const userRef = doc(db, "users", user.uid);
+          const userSnap = await getDocFromServer(userRef);
+          if (!userSnap.exists()) {
+            await setDoc(userRef, {
+              email: user.email,
+              displayName: user.displayName,
+              role: 'client'
+            });
+            console.log("User document created in Firestore.");
+          }
+        } catch (error) {
+          console.error("Error ensuring user document exists:", error);
+        }
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -258,13 +292,15 @@ function RotaBankApp() {
     );
 
     const unsubscribeExpenses = onSnapshot(expensesQuery, (snapshot) => {
+      console.log(`Expenses snapshot received. Docs: ${snapshot.docs.length}`);
       const data = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as Expense[];
       setExpenses(data);
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, "rotabank_expenses");
+      console.error("Expenses listener error:", error);
+      handleFirestoreError(error, OperationType.LIST, "rotabank_expenses");
     });
 
     const entriesQuery = query(
@@ -286,6 +322,7 @@ function RotaBankApp() {
       setEntriesError(null);
     }, (error) => {
       console.error("Entries listener error:", error);
+      handleFirestoreError(error, OperationType.LIST, "entries");
       setEntriesError("Não foi possível carregar seu saldo do Rota Financeira.");
     });
 
@@ -464,13 +501,27 @@ function RotaBankApp() {
     }
   };
 
-  const totalSpentMonth = expenses
-    .filter(e => new Date(e.date).getMonth() === new Date().getMonth())
-    .reduce((acc, curr) => acc + curr.amount, 0);
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
 
-  const totalIncome = entries.reduce((acc, curr) => acc + (Number(curr.netAmount) || 0), 0);
+  const monthlyIncome = entries
+    .filter(e => {
+      if (!e.date) return false;
+      const d = new Date(e.date);
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+    })
+    .reduce((acc, curr) => acc + (Number(curr.netAmount) || 0), 0);
+
+  const monthlyExpenses = expenses
+    .filter(e => {
+      const d = new Date(e.date);
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+    })
+    .reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+
   const totalExpenses = expenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-  const availableBalance = totalIncome - totalExpenses;
+  const availableBalance = monthlyIncome - monthlyExpenses;
 
   // Last 7 days chart data
   const last7Days = Array.from({ length: 7 }, (_, i) => {
@@ -583,66 +634,83 @@ function RotaBankApp() {
   return (
     <div className="min-h-screen pb-24 md:pb-0 md:pl-24 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white transition-colors">
       {/* Sidebar / Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 w-full h-20 glass md:h-full md:w-24 md:flex-col flex items-center justify-around md:justify-center gap-8 z-50 px-4 md:px-0 border-t md:border-t-0 md:border-r border-slate-200 dark:border-slate-800">
-        <button 
+      <nav className="fixed bottom-0 left-0 w-full h-20 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl md:h-full md:w-24 md:flex-col flex items-center justify-around md:justify-center gap-8 z-50 px-4 md:px-0 border-t md:border-t-0 md:border-r border-slate-200 dark:border-zinc-800 transition-colors duration-300">
+        <motion.button 
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
           onClick={() => setActiveTab("dashboard")}
-          className={`p-4 rounded-2xl transition-all ${activeTab === 'dashboard' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'text-slate-400 hover:text-emerald-600'}`}
+          className={`p-4 rounded-2xl transition-all ${activeTab === 'dashboard' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-slate-400 dark:text-zinc-500 hover:text-emerald-500'}`}
         >
           <LayoutDashboard className="w-6 h-6" />
-        </button>
-        <button 
+        </motion.button>
+        <motion.button 
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
           onClick={() => setActiveTab("history")}
-          className={`p-4 rounded-2xl transition-all ${activeTab === 'history' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'text-slate-400 hover:text-emerald-600'}`}
+          className={`p-4 rounded-2xl transition-all ${activeTab === 'history' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-slate-400 dark:text-zinc-500 hover:text-emerald-500'}`}
         >
           <History className="w-6 h-6" />
-        </button>
+        </motion.button>
         <div className="hidden md:block flex-1" />
-        <button 
+        <motion.button 
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
           onClick={() => setIsDarkMode(!isDarkMode)}
-          className="p-4 rounded-2xl text-slate-400 hover:text-emerald-600 transition-all"
+          className="p-4 rounded-2xl text-slate-400 dark:text-zinc-500 hover:text-emerald-500 transition-all"
         >
           {isDarkMode ? <Sun className="w-6 h-6" /> : <Moon className="w-6 h-6" />}
-        </button>
-        <button 
+        </motion.button>
+        <motion.button 
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
           onClick={handleLogout}
-          className="p-4 rounded-2xl text-slate-400 hover:text-red-500 transition-all"
+          className="p-4 rounded-2xl text-slate-400 dark:text-zinc-500 hover:text-rose-500 transition-all"
           title="Sair"
         >
           <LogOut className="w-6 h-6" />
-        </button>
-        <button 
+        </motion.button>
+        <motion.button 
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
           onClick={() => setShowDeleteConfirm(true)}
-          className="p-4 rounded-2xl text-slate-400 hover:text-red-600 transition-all"
+          className="p-4 rounded-2xl text-slate-400 dark:text-zinc-500 hover:text-rose-600 transition-all"
           title="Excluir Conta e Dados"
         >
           <Trash2 className="w-6 h-6" />
-        </button>
+        </motion.button>
       </nav>
 
       {/* Main Content */}
-      <main className="max-w-5xl mx-auto p-6 md:p-12">
-        <header className="bg-slate-900 dark:bg-emerald-950 p-6 md:p-8 rounded-3xl mb-12 flex flex-col md:flex-row justify-between items-center gap-6 shadow-2xl shadow-emerald-900/20 border border-white/5">
-          <div className="flex items-center gap-4">
+      <main className="max-w-6xl mx-auto p-6 md:p-12">
+        <header className="flex flex-col md:flex-row justify-between items-center gap-6 mb-12">
+          <div className="flex items-center gap-5">
             {logoUrl && (
-              <motion.img 
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                src={logoUrl} 
-                alt="RotaBank Logo" 
-                className="w-14 h-14 rounded-2xl shadow-lg shadow-emerald-500/20"
-                referrerPolicy="no-referrer"
-              />
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0, rotate: -10 }}
+                animate={{ scale: 1, opacity: 1, rotate: 0 }}
+                className="relative"
+              >
+                <img 
+                  src={logoUrl} 
+                  alt="RotaBank Logo" 
+                  className="w-16 h-16 rounded-3xl shadow-2xl shadow-emerald-500/20 relative z-10"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute inset-0 bg-emerald-500 blur-2xl opacity-20 -z-10" />
+              </motion.div>
             )}
             <div>
-              <h1 className="text-3xl md:text-4xl font-black tracking-tight">
-                <span className="text-white">Rota</span>
+              <h1 className="text-4xl font-black tracking-tight leading-none mb-1">
+                <span className="text-slate-900 dark:text-white">Rota</span>
                 <span className="text-emerald-500">Bank</span>
               </h1>
-              <p className="text-slate-400 text-sm font-medium">Bem-vindo, {user.displayName?.split(' ')[0]}!</p>
+              <p className="text-slate-500 dark:text-zinc-500 text-sm font-medium">
+                Olá, <span className="text-slate-900 dark:text-zinc-200">{user.displayName?.split(' ')[0]}</span> 👋
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <Button onClick={() => setIsAdding(true)} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white border-none shadow-lg shadow-emerald-600/20">
+            <Button onClick={() => setIsAdding(true)} className="flex items-center gap-2 px-8 py-4">
               <Plus className="w-5 h-5" /> Novo Gasto
             </Button>
           </div>
@@ -709,75 +777,147 @@ function RotaBankApp() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="grid grid-cols-1 md:grid-cols-2 gap-6"
+              className="grid grid-cols-1 md:grid-cols-3 gap-6"
             >
-              <div className="relative">
-                <BalanceCard 
-                  title="Saldo Disponível" 
-                  amount={availableBalance} 
-                  icon={Wallet} 
-                />
-                <p className="mt-2 text-[10px] text-slate-500 text-center italic">
-                  Saldo sincronizado com o Rota Financeira
-                </p>
-                {entriesError && (
-                  <div className="absolute top-2 right-2 group">
-                    <AlertCircle className="w-4 h-4 text-white/60 cursor-help" />
-                    <div className="absolute right-0 top-6 w-48 p-2 bg-slate-900 text-white text-[10px] rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none">
-                      {entriesError}
+              {/* Bento Grid Layout */}
+              <div className="md:col-span-2 space-y-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <div className="relative group">
+                    <BalanceCard 
+                      title="Saldo Disponível" 
+                      amount={availableBalance} 
+                      icon={Wallet} 
+                      variant="emerald"
+                    />
+                    <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 px-3 py-1 bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-full shadow-sm">
+                      <p className="text-[9px] font-bold text-slate-500 dark:text-zinc-500 uppercase tracking-widest whitespace-nowrap">
+                        Mês Atual • Rota Financeira
+                      </p>
                     </div>
-                  </div>
-                )}
-                {entriesError && (
-                  <div className="mt-2 p-2 bg-red-500/20 border border-red-500/50 rounded-lg flex items-center justify-between">
-                    <span className="text-[10px] text-red-200">Erro ao carregar saldo</span>
-                    <button 
-                      onClick={() => window.location.reload()}
-                      className="text-[10px] bg-red-500 text-white px-2 py-0.5 rounded hover:bg-red-600 transition-colors"
-                    >
-                      Tentar Novamente
-                    </button>
-                  </div>
-                )}
-              </div>
-              <BalanceCard 
-                title="Total Gasto no Mês" 
-                amount={totalSpentMonth} 
-                icon={TrendingDown}
-                variant="slate"
-              />
-
-              <Card className="md:col-span-2">
-                <div className="flex justify-between items-end mb-8">
-                  <div>
-                    <h3 className="text-xl font-black mb-1">Gastos Recentes</h3>
-                    <p className="text-slate-400 text-sm font-medium">Últimos 7 dias</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-end justify-between h-48 gap-2">
-                  {chartData.map((day, i) => (
-                    <div key={i} className="flex-1 flex flex-col items-center gap-2 group">
-                      <div className="w-full relative flex items-end justify-center h-full">
-                        <motion.div 
-                          initial={{ height: 0 }}
-                          animate={{ height: `${(day.total / maxTotal) * 100}%` }}
-                          className="w-full max-w-[40px] bg-emerald-600/20 group-hover:bg-emerald-600 rounded-t-xl transition-colors relative"
-                        >
-                          {day.total > 0 && (
-                            <div className="absolute -top-8 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap text-[10px] font-black bg-slate-900 text-white px-2 py-1 rounded-lg">
-                              R$ {day.total.toFixed(2)}
-                            </div>
-                          )}
-                        </motion.div>
+                    {entriesError && (
+                      <div className="absolute top-4 right-4 group/err">
+                        <AlertCircle className="w-4 h-4 text-white/60 cursor-help" />
+                        <div className="absolute right-0 top-6 w-48 p-3 bg-zinc-900 text-white text-[10px] rounded-xl opacity-0 group-hover/err:opacity-100 transition-opacity z-10 pointer-events-none shadow-2xl border border-zinc-800">
+                          {entriesError}
+                        </div>
                       </div>
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
-                        {new Date(day.date).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')}
-                      </span>
-                    </div>
-                  ))}
+                    )}
+                  </div>
+
+                  <BalanceCard 
+                    title="Gasto no Mês" 
+                    amount={monthlyExpenses} 
+                    icon={TrendingDown}
+                    variant="slate"
+                  />
                 </div>
-              </Card>
+
+                <Card className="p-8">
+                  <div className="flex justify-between items-center mb-8">
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900 dark:text-zinc-100">Fluxo de Gastos</h3>
+                      <p className="text-slate-500 dark:text-zinc-500 text-xs font-medium">Últimos 7 dias</p>
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-zinc-800 rounded-full">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <span className="text-[10px] font-bold text-slate-600 dark:text-zinc-400 uppercase tracking-widest">Ativo</span>
+                    </div>
+                  </div>
+                  
+                  <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={chartData}>
+                        <defs>
+                          <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? "#27272a" : "#e2e8f0"} />
+                        <XAxis 
+                          dataKey="date" 
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fontSize: 10, fill: isDarkMode ? "#71717a" : "#94a3b8", fontWeight: 600 }}
+                          tickFormatter={(str) => new Date(str).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')}
+                        />
+                        <YAxis hide />
+                        <Tooltip 
+                          contentStyle={{ 
+                            backgroundColor: isDarkMode ? "#18181b" : "#ffffff",
+                            border: "none",
+                            borderRadius: "16px",
+                            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+                            fontSize: "12px",
+                            fontWeight: "bold",
+                            color: isDarkMode ? "#f4f4f5" : "#0f172a"
+                          }}
+                          itemStyle={{ color: "#10b981" }}
+                          formatter={(value: number) => [`R$ ${value.toFixed(2)}`, 'Gasto']}
+                          labelFormatter={(label) => new Date(label).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })}
+                        />
+                        <Area 
+                          type="monotone" 
+                          dataKey="total" 
+                          stroke="#10b981" 
+                          strokeWidth={3}
+                          fillOpacity={1} 
+                          fill="url(#colorTotal)" 
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+              </div>
+
+              <div className="space-y-6">
+                <Card className="p-8 flex flex-col h-full">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-zinc-100">Resumo</h3>
+                    <div className="p-2 bg-slate-100 dark:bg-zinc-800 rounded-xl">
+                      <TrendingUp className="w-4 h-4 text-emerald-500" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-6 flex-1">
+                    <div className="p-5 rounded-3xl bg-emerald-500/10 border border-emerald-500/20">
+                      <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest mb-1">Recebido no Mês</p>
+                      <p className="text-2xl font-mono font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
+                        + R$ {monthlyIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
+
+                    <div className="p-5 rounded-3xl bg-rose-500/10 border border-rose-500/20">
+                      <p className="text-[10px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-widest mb-1">Gasto no Mês</p>
+                      <p className="text-2xl font-mono font-medium tabular-nums text-rose-600 dark:text-rose-400">
+                        - R$ {monthlyExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
+
+                    <div className="pt-6 border-t border-slate-100 dark:border-zinc-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold text-slate-500 dark:text-zinc-500 uppercase tracking-widest">Saúde Financeira</span>
+                        <span className="text-xs font-bold text-emerald-500">{(availableBalance / (monthlyIncome || 1) * 100).toFixed(0)}%</span>
+                      </div>
+                      <div className="h-2 w-full bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                        <motion.div 
+                          initial={{ width: 0 }}
+                          animate={{ width: `${Math.min(Math.max((availableBalance / (monthlyIncome || 1) * 100), 0), 100)}%` }}
+                          className="h-full bg-emerald-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button 
+                    variant="secondary" 
+                    onClick={() => setActiveTab("history")}
+                    className="w-full mt-8 py-4 text-xs uppercase tracking-widest"
+                  >
+                    Ver Histórico Completo
+                  </Button>
+                </Card>
+              </div>
             </motion.div>
           ) : (
             <motion.div 
@@ -785,82 +925,101 @@ function RotaBankApp() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="flex flex-col gap-6"
+              className="space-y-12"
             >
-              <div className="flex flex-col gap-4">
-                <h3 className="text-lg font-black flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-emerald-500" />
-                  Histórico de Gastos
-                </h3>
-                {expenses.length === 0 ? (
-                  <div className="text-center py-20">
-                    <History className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                    <p className="text-slate-400 font-medium">Nenhum gasto registrado ainda.</p>
+              <div className="flex flex-col gap-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-2xl font-black flex items-center gap-3">
+                    <div className="p-3 bg-emerald-500 text-white rounded-2xl shadow-lg shadow-emerald-500/20">
+                      <Calendar className="w-6 h-6" />
+                    </div>
+                    Histórico de Gastos
+                  </h3>
+                  <div className="text-right">
+                    <p className="text-[10px] font-bold text-slate-500 dark:text-zinc-500 uppercase tracking-widest">Total no Período</p>
+                    <p className="text-xl font-mono font-medium text-rose-500">- R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                   </div>
+                </div>
+
+                {expenses.length === 0 ? (
+                  <Card className="text-center py-24 border-dashed border-2">
+                    <History className="w-16 h-16 text-slate-200 dark:text-zinc-800 mx-auto mb-4" />
+                    <p className="text-slate-500 dark:text-zinc-500 font-medium">Nenhum gasto registrado ainda.</p>
+                  </Card>
                 ) : (
-                  expenses.map((expense) => (
-                    <Card key={expense.id} className="p-6 flex items-center justify-between group">
-                      <div className="flex items-center gap-4">
-                        <div className="p-4 rounded-2xl bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600">
-                          {CATEGORIES.find(c => c.value === expense.category)?.icon || <MoreHorizontal />}
-                        </div>
-                        <div>
-                          <h4 className="font-black">{expense.description || expense.category}</h4>
-                          <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">
-                            {expense.category} • {new Date(expense.date).toLocaleDateString('pt-BR')}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <span className="text-lg font-black text-emerald-600">
-                          - R$ {expense.amount.toFixed(2)}
-                        </span>
-                        <button 
-                          onClick={() => deleteExpense(expense.id)}
-                          className="p-2 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </div>
-                    </Card>
-                  ))
+                  <div className="grid grid-cols-1 gap-4">
+                    {expenses.map((expense, i) => (
+                      <motion.div
+                        key={expense.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.05 }}
+                      >
+                        <Card className="p-6 flex items-center justify-between group hover:border-emerald-500/30 transition-all">
+                          <div className="flex items-center gap-5">
+                            <div className="p-4 rounded-3xl bg-slate-100 dark:bg-zinc-800 text-emerald-500 group-hover:scale-110 transition-transform">
+                              {CATEGORIES.find(c => c.value === expense.category)?.icon || <MoreHorizontal />}
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900 dark:text-zinc-100">{expense.description || expense.category}</h4>
+                              <p className="text-[10px] text-slate-500 dark:text-zinc-500 font-bold uppercase tracking-widest mt-0.5">
+                                {expense.category} • {new Date(expense.date).toLocaleDateString('pt-BR')}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-6">
+                            <span className="text-xl font-mono font-medium tabular-nums text-rose-500">
+                              - R$ {expense.amount.toFixed(2)}
+                            </span>
+                            <motion.button 
+                              whileHover={{ scale: 1.2, rotate: 5 }}
+                              whileTap={{ scale: 0.9 }}
+                              onClick={() => deleteExpense(expense.id)}
+                              className="p-3 text-slate-300 dark:text-zinc-700 hover:text-rose-500 dark:hover:text-rose-500 transition-colors"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </motion.button>
+                          </div>
+                        </Card>
+                      </motion.div>
+                    ))}
+                  </div>
                 )}
               </div>
 
-              {entries.length > 0 ? (
-                <div className="flex flex-col gap-4 mt-4">
-                  <h3 className="text-lg font-black flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-blue-500" />
-                    Entradas (Rota Financeira)
+              {entries.length > 0 && (
+                <div className="flex flex-col gap-6 pt-12 border-t border-slate-200 dark:border-zinc-800">
+                  <h3 className="text-2xl font-black flex items-center gap-3">
+                    <div className="p-3 bg-blue-500 text-white rounded-2xl shadow-lg shadow-blue-500/20">
+                      <ArrowUpRight className="w-6 h-6" />
+                    </div>
+                    Entradas Sincronizadas
                   </h3>
-                  <div className="space-y-3 opacity-80">
-                    {entries.map((entry) => (
-                      <Card key={entry.id} className="p-4 flex items-center justify-between bg-blue-50/30 dark:bg-blue-900/10 border-blue-100 dark:border-blue-900/30">
-                        <div className="flex items-center gap-4">
-                          <div className="p-3 bg-blue-100 dark:bg-blue-900/30 text-blue-600 rounded-xl">
-                            <TrendingUp className="w-5 h-5" />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {entries.map((entry, i) => (
+                      <motion.div
+                        key={entry.id}
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: i * 0.1 }}
+                      >
+                        <Card className="p-6 flex items-center justify-between bg-blue-500/5 border-blue-500/20">
+                          <div className="flex items-center gap-4">
+                            <div className="p-3 bg-blue-500/10 text-blue-500 rounded-2xl">
+                              <TrendingUp className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="font-bold text-slate-900 dark:text-zinc-100 text-sm">Rota Financeira</p>
+                              <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">ID: {entry.id.substring(0, 8)}</p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-bold text-slate-900 dark:text-white">Entrada Sincronizada</p>
-                            <p className="text-xs text-slate-500">ID: {entry.id.substring(0, 8)}...</p>
-                          </div>
-                        </div>
-                        <p className="font-black text-blue-600">
-                          + R$ {entry.netAmount.toFixed(2)}
-                        </p>
-                      </Card>
+                          <p className="text-xl font-mono font-medium text-blue-500 tabular-nums">
+                            + R$ {entry.netAmount.toFixed(2)}
+                          </p>
+                        </Card>
+                      </motion.div>
                     ))}
                   </div>
-                </div>
-              ) : !entriesError && (
-                <div className="flex flex-col gap-4 mt-4">
-                  <h3 className="text-lg font-black flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-blue-500" />
-                    Entradas (Rota Financeira)
-                  </h3>
-                  <Card className="text-center py-8 bg-slate-50 dark:bg-slate-900/50 border-dashed">
-                    <p className="text-slate-500 text-sm">Nenhuma entrada de renda encontrada no Rota Financeira.</p>
-                  </Card>
                 </div>
               )}
             </motion.div>

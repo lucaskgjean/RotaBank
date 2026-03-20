@@ -22,6 +22,13 @@ service cloud.firestore {
     //   - date: string (optional, ISO 8601 format)
     //   - uid: string (required, owner UID)
     //
+    // Collection: users
+    // Document ID: user UID
+    // Fields:
+    //   - email: string
+    //   - displayName: string
+    //   - role: string ('admin' or 'client')
+    //
     // ===============================================================
 
     // Helper Functions
@@ -37,6 +44,15 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == resource.data.uid;
     }
 
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          (request.auth.token.email == "jeanlucasgontijo.15@gmail.com" && request.auth.token.email_verified == true) ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+        );
+    }
+
     function uidUnchanged() {
       return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
     }
@@ -49,37 +65,48 @@ service cloud.firestore {
       return request.resource.data.keys().hasAll(fields);
     }
 
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
     function isValidExpense(data) {
-      return data.amount is number && data.amount > 0 &&
-             data.category is string && data.category.size() > 0 &&
+      return hasOnlyAllowedFields(['amount', 'category', 'description', 'date', 'uid']) &&
+             data.amount is number && data.amount > 0 &&
+             data.category is string && data.category.size() > 0 && data.category.size() < 50 &&
              (!('description' in data) || (data.description is string && data.description.size() <= 100)) &&
              data.date is string && data.date.matches("^\\d{4}-\\d{2}-\\d{2}.*") &&
              data.uid == request.auth.uid;
     }
 
     function isValidEntry(data) {
-      return data.netAmount is number && data.netAmount > 0 &&
+      return hasOnlyAllowedFields(['netAmount', 'description', 'date', 'uid']) &&
+             data.netAmount is number && data.netAmount > 0 &&
              data.uid == request.auth.uid;
+    }
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['email', 'displayName', 'role']) &&
+             data.email is string && data.role in ['admin', 'client'];
     }
 
     // Rules
     match /rotabank_expenses/{expenseId} {
-      allow get: if isAuthenticated() && resource.data.uid == request.auth.uid;
-      allow list: if isAuthenticated(); // App uses query(..., where("uid", "==", user.uid))
+      allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && hasRequiredFields(['amount', 'category', 'date', 'uid']) && isValidExpense(request.resource.data) && uidUnchanged();
-      allow update: if isAuthenticated() && resource.data.uid == request.auth.uid && isValidExpense(request.resource.data) && uidNotModified();
-      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      allow update: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin()) && isValidExpense(request.resource.data) && uidNotModified();
+      allow delete: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
     }
 
     match /entries/{entryId} {
-      allow get: if isAuthenticated() && resource.data.uid == request.auth.uid;
-      allow list: if isAuthenticated(); // App uses query(..., where("uid", "==", user.uid))
+      allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
       // RotaBank only reads entries from Rota Financeira as a mirror.
-      // No create/update/delete allowed from this app to prevent data alteration.
     }
 
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'client';
+      allow update: if isAuthenticated() && (isAdmin() || (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role));
+      allow delete: if isAdmin();
     }
   }
 }

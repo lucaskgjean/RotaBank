@@ -23,38 +23,41 @@ export function CustomSelect({
 
   return (
     <div className="flex flex-col gap-2 relative">
-      <label className="text-xs font-black uppercase tracking-wider text-slate-400 ml-2">
+      <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-zinc-500 ml-2">
         {label}
       </label>
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="bg-slate-100 dark:bg-slate-800 rounded-2xl px-4 py-3 flex items-center justify-between text-left focus:ring-2 focus:ring-emerald-500 outline-none"
+        className="bg-slate-100 dark:bg-zinc-800 border border-transparent focus:border-emerald-500/50 dark:focus:border-emerald-500/30 rounded-2xl px-4 py-3 flex items-center justify-between text-left outline-none transition-all"
       >
-        <span className="flex items-center gap-2">
-          {selectedOption?.icon}
-          {selectedOption?.label || "Selecione..."}
+        <span className="flex items-center gap-3 text-slate-900 dark:text-zinc-100">
+          <span className="text-emerald-500">{selectedOption?.icon}</span>
+          <span className="font-medium">{selectedOption?.label || "Selecione..."}</span>
         </span>
-        <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 w-full mt-2 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-100 dark:border-slate-700 z-50 overflow-hidden">
-          {options.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => {
-                onChange(option.value);
-                setIsOpen(false);
-              }}
-              className="w-full px-4 py-3 text-left hover:bg-emerald-50 dark:hover:bg-emerald-900/20 flex items-center gap-2 transition-colors"
-            >
-              {option.icon}
-              {option.label}
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
+          <div className="absolute top-full left-0 w-full mt-2 bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-slate-100 dark:border-zinc-800 z-50 overflow-hidden">
+            {options.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  onChange(option.value);
+                  setIsOpen(false);
+                }}
+                className="w-full px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-zinc-800 flex items-center gap-3 transition-colors text-slate-700 dark:text-zinc-300"
+              >
+                <span className="text-emerald-500">{option.icon}</span>
+                <span className="font-medium">{option.label}</span>
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
