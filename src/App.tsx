@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { 
   Settings,
   Cloud,
@@ -696,6 +696,19 @@ function RotaBankApp() {
 
   const maxTotal = Math.max(...chartData.map(d => d.total), 1);
 
+  const monthlyEntries = useMemo(() => {
+    const groups: { [key: string]: number } = {};
+    entries.forEach(entry => {
+      const date = entry.date ? new Date(entry.date) : new Date();
+      const monthKey = date.toISOString().substring(0, 7); // YYYY-MM
+      const amount = entry.netAmount ?? entry.valor_liquido ?? entry.amount ?? 0;
+      groups[monthKey] = (groups[monthKey] || 0) + amount;
+    });
+    return Object.entries(groups)
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([month, total]) => ({ month, total }));
+  }, [entries]);
+
   if (!isAuthReady) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
@@ -1115,6 +1128,38 @@ function RotaBankApp() {
                     )}
                   </div>
                 </div>
+
+                {/* Histórico de Faturamento Mensal */}
+                {monthlyEntries.length > 0 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 ml-1">
+                      <Cloud className="w-3 h-3 text-emerald-600" />
+                      <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Histórico Rota Financeira</h4>
+                    </div>
+                    <div className="flex gap-4 overflow-x-auto pb-4 no-scrollbar -mx-2 px-2">
+                      {monthlyEntries.map((item) => (
+                        <motion.div
+                          key={item.month}
+                          whileHover={{ y: -4 }}
+                          className="min-w-[200px]"
+                        >
+                          <Card className="p-5 bg-emerald-500/5 border-emerald-500/10 flex flex-col gap-2 relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-600/5 rounded-bl-full -mr-8 -mt-8 transition-transform group-hover:scale-110" />
+                            <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.15em] relative z-10">
+                              {new Date(item.month + "-02").toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                            </span>
+                            <div className="flex items-baseline gap-1 relative z-10">
+                              <span className="text-[10px] font-bold text-emerald-600/60 uppercase">R$</span>
+                              <span className="text-2xl font-mono font-black text-emerald-600 tabular-nums">
+                                {item.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </Card>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {expenses.length === 0 && entries.length === 0 ? (
                   <Card className="text-center py-24 border-dashed border-2">
