@@ -11,25 +11,27 @@ export function CustomSelect({
   label, 
   options, 
   value, 
-  onChange 
+  onChange,
+  className = ""
 }: { 
   label: string; 
   options: Option[]; 
   value: string; 
   onChange: (val: string) => void;
+  className?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const selectedOption = options.find(o => o.value === value);
 
   return (
     <div className="flex flex-col gap-2 relative">
-      <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-zinc-500 ml-2">
+      <label className="text-[10px] font-bold uppercase tracking-widest text-slate-800 dark:text-zinc-200 ml-2">
         {label}
       </label>
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="bg-slate-100 dark:bg-zinc-800 border border-transparent focus:border-emerald-500/50 dark:focus:border-emerald-500/30 rounded-2xl px-4 py-3 flex items-center justify-between text-left outline-none transition-all"
+        className={`bg-slate-100 dark:bg-zinc-800 border border-transparent focus:border-emerald-500/50 dark:focus:border-emerald-500/30 rounded-2xl px-4 py-3 flex items-center justify-between text-left outline-none transition-all ${className}`}
       >
         <span className="flex items-center gap-3 text-slate-900 dark:text-zinc-100">
           <span className="text-emerald-500">{selectedOption?.icon}</span>

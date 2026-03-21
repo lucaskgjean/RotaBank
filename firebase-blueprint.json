@@ -9,9 +9,10 @@
         "category": { "type": "string", "description": "The category of the expense." },
         "description": { "type": "string", "description": "A brief description of the expense." },
         "date": { "type": "string", "format": "date", "description": "The date of the expense (YYYY-MM-DD)." },
-        "uid": { "type": "string", "description": "The user ID of the owner." }
+        "uid": { "type": "string", "description": "The user ID of the owner." },
+        "type": { "type": "string", "enum": ["expense", "income"], "description": "The type of the transaction." }
       },
-      "required": ["amount", "category", "date", "uid"]
+      "required": ["amount", "category", "date", "uid", "type"]
     },
     "Entry": {
       "title": "Entry",
@@ -46,6 +47,16 @@
         "month": { "type": "string", "description": "The reference month (YYYY-MM)." }
       },
       "required": ["totalNetAmount", "month"]
+    },
+    "CustomCategory": {
+      "title": "CustomCategory",
+      "description": "A custom category created by the user.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the category." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "The creation timestamp." }
+      },
+      "required": ["name"]
     }
   },
   "firestore": {
@@ -60,6 +71,10 @@
     "/users/{userId}": {
       "schema": "User",
       "description": "Collection of user profiles."
+    },
+    "/users/{userId}/custom_categories/{categoryId}": {
+      "schema": "CustomCategory",
+      "description": "Subcollection of custom categories for a user."
     },
     "/balances/{userId}": {
       "schema": "Balance",

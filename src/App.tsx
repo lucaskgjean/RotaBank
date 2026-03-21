@@ -55,6 +55,7 @@ import {
   addDoc, 
   setDoc,
   deleteDoc, 
+  updateDoc,
   doc, 
   onSnapshot, 
   query, 
@@ -134,7 +135,11 @@ interface Expense {
   category: string;
   description: string;
   date: string;
+  time?: string;
   uid: string;
+  type: "expense" | "income";
+  status: "paid" | "pending";
+  paymentMethod?: string;
 }
 
 interface Entry {
@@ -201,13 +206,22 @@ class ErrorBoundary extends React.Component<any, any> {
   }
 }
 
-const CATEGORIES = [
+const DEFAULT_CATEGORIES = [
   { value: "Aluguel", label: "Aluguel", icon: <Home className="w-4 h-4" /> },
   { value: "Mercado", label: "Mercado", icon: <ShoppingCart className="w-4 h-4" /> },
   { value: "Contas", label: "Contas", icon: <Receipt className="w-4 h-4" /> },
   { value: "Lazer", label: "Lazer", icon: <Gamepad2 className="w-4 h-4" /> },
   { value: "Investimento", label: "Investimento", icon: <TrendingUp className="w-4 h-4" /> },
+  { value: "Salário", label: "Salário", icon: <Wallet className="w-4 h-4" /> },
+  { value: "Venda", label: "Venda", icon: <ArrowUpRight className="w-4 h-4" /> },
   { value: "Outros", label: "Outros", icon: <MoreHorizontal className="w-4 h-4" /> },
+];
+
+const PAYMENT_METHODS = [
+  { value: "pix", label: "Pix", icon: <QrCode className="w-4 h-4" /> },
+  { value: "dinheiro", label: "Dinheiro", icon: <Wallet className="w-4 h-4" /> },
+  { value: "debito", label: "Débito", icon: <CreditCard className="w-4 h-4" /> },
+  { value: "credito", label: "Crédito", icon: <CreditCard className="w-4 h-4" /> },
 ];
 
 const parseCurrency = (val: any): number => {
@@ -233,12 +247,20 @@ function RotaBankApp() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [activeTab, setActiveTab] = useState<"home" | "history" | "transfer" | "cards" | "reports">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "history" | "actions" | "reports" | "settings">("home");
+  const [transactionType, setTransactionType] = useState<"expense" | "income">("expense");
+  const [status, setStatus] = useState<"paid" | "pending">("paid");
+  const [paymentMethod, setPaymentMethod] = useState<string>("pix");
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [balance, setBalance] = useState<Balance | null>(null);
   const [entriesError, setEntriesError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [customCategories, setCustomCategories] = useState<{ value: string; label: string; icon: any }[]>([]);
+  const allCategories = [...DEFAULT_CATEGORIES, ...customCategories];
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [showCardDetails, setShowCardDetails] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   
@@ -255,6 +277,7 @@ function RotaBankApp() {
   const [category, setCategory] = useState("Outros");
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [time, setTime] = useState(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
 
   // Auth Listener
   useEffect(() => {
@@ -333,6 +356,7 @@ function RotaBankApp() {
       return;
     }
     console.log(`Setting up listeners for user: ${user.uid}`);
+    setIsSyncing(true);
 
     // Expenses Query - Simplified for debugging
     const expensesQuery = query(
@@ -348,6 +372,7 @@ function RotaBankApp() {
       })) as Expense[];
       // Sort manually if needed, but let's see if it works first
       setExpenses(data.sort((a, b) => b.date.localeCompare(a.date)));
+      setIsSyncing(false);
     }, (error) => {
       console.error("Expenses listener error details:", error);
       handleFirestoreError(error, OperationType.LIST, "rotabank_expenses");
@@ -394,10 +419,25 @@ function RotaBankApp() {
       setEntriesError("Não foi possível carregar seu saldo consolidado.");
     });
 
+    // Custom Categories Listener
+    const customCategoriesRef = collection(db, "users", user.uid, "custom_categories");
+    const unsubscribeCustomCategories = onSnapshot(customCategoriesRef, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({
+        value: doc.data().name,
+        label: doc.data().name,
+        icon: <Sparkles className="w-4 h-4" />
+      }));
+      setCustomCategories(data);
+    }, (error) => {
+      console.error("Custom categories listener error:", error);
+      handleFirestoreError(error, OperationType.GET, `users/${user.uid}/custom_categories`);
+    });
+
     return () => {
       unsubscribeExpenses();
       unsubscribeEntries();
       unsubscribeBalance();
+      unsubscribeCustomCategories();
     };
   }, [isAuthReady, user]);
 
@@ -548,32 +588,58 @@ function RotaBankApp() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent, type: "expense" | "income" = "expense") => {
     e.preventDefault();
     if (!amount || !category || !date || !user) return;
 
+    setIsSyncing(true);
     try {
       await addDoc(collection(db, "rotabank_expenses"), {
         amount: parseFloat(amount),
         category,
         description,
         date,
-        uid: user.uid
+        time,
+        uid: user.uid,
+        type,
+        status,
+        paymentMethod
       });
       setAmount("");
       setCategory("Outros");
       setDescription("");
+      setStatus("paid");
+      setPaymentMethod("pix");
+      setTime(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
       setIsAdding(false);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, "rotabank_expenses");
+    } finally {
+      setIsSyncing(false);
     }
   };
 
   const deleteExpense = async (id: string) => {
+    setIsSyncing(true);
     try {
       await deleteDoc(doc(db, "rotabank_expenses", id));
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, "rotabank_expenses");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const toggleStatus = async (id: string, currentStatus: "paid" | "pending") => {
+    setIsSyncing(true);
+    try {
+      await updateDoc(doc(db, "rotabank_expenses", id), {
+        status: currentStatus === "paid" ? "pending" : "paid"
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, "rotabank_expenses");
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -585,16 +651,34 @@ function RotaBankApp() {
 
   const totalIncome = balance?.totalNetAmount ?? 0;
 
+  const manualIncome = expenses
+    .filter(e => e.type === "income" && e.status === "paid")
+    .reduce((acc, curr) => acc + parseCurrency(curr.amount), 0);
+
+  const manualIncomePending = expenses
+    .filter(e => e.type === "income" && e.status === "pending")
+    .reduce((acc, curr) => acc + parseCurrency(curr.amount), 0);
+
+  const manualExpenses = expenses
+    .filter(e => e.type === "expense" && e.status === "paid")
+    .reduce((acc, curr) => acc + parseCurrency(curr.amount), 0);
+
+  const manualExpensesPending = expenses
+    .filter(e => e.type === "expense" && e.status === "pending")
+    .reduce((acc, curr) => acc + parseCurrency(curr.amount), 0);
+
   const monthlyExpenses = expenses
     .filter(e => {
+      if (e.type !== "expense" || e.status !== "paid") return false;
       const d = new Date(e.date);
       if (isNaN(d.getTime())) return false;
       return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
     })
     .reduce((acc, curr) => acc + parseCurrency(curr.amount), 0);
 
-  const totalExpenses = expenses.reduce((acc, curr) => acc + parseCurrency(curr.amount), 0);
-  const availableBalance = totalIncome - totalExpenses;
+  const totalExpenses = manualExpenses;
+  const availableBalance = totalIncome + manualIncome - totalExpenses;
+  const projectedBalance = availableBalance + manualIncomePending - manualExpensesPending;
 
   // Last 7 days chart data
   const last7Days = Array.from({ length: 7 }, (_, i) => {
@@ -605,7 +689,7 @@ function RotaBankApp() {
 
   const chartData = last7Days.map(d => {
     const dayTotal = expenses
-      .filter(e => e.date === d)
+      .filter(e => e.date === d && e.type === "expense" && e.status === "paid")
       .reduce((acc, curr) => acc + curr.amount, 0);
     return { date: d, total: dayTotal };
   });
@@ -715,51 +799,62 @@ function RotaBankApp() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white transition-colors font-sans selection:bg-indigo-100 dark:selection:bg-indigo-500/30">
+    <div className="min-h-screen w-full overflow-x-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white transition-colors font-sans selection:bg-emerald-100 dark:selection:bg-emerald-500/30">
       {/* Header */}
-      <header className="sticky top-0 z-40 h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 flex items-center justify-between px-6 transition-colors duration-300">
+      <header className="fixed top-0 left-0 right-0 z-50 h-16 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border-b border-slate-100 dark:border-slate-800 grid grid-cols-3 items-center px-6 transition-colors duration-300">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl shadow-md flex items-center justify-center text-white">
+          <div className="w-10 h-10 bg-emerald-600 rounded-xl shadow-md flex items-center justify-center text-white">
             <Wallet className="w-6 h-6" />
           </div>
           <h1 className="text-xl font-black tracking-tighter font-display">
             <span className="text-slate-900 dark:text-white">Rota</span>
-            <span className="text-indigo-600">Bank</span>
+            <span className="text-emerald-600">Bank</span>
           </h1>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200/50 dark:border-slate-700/50">
-            <div className="relative">
-              <Cloud className="w-4 h-4 text-slate-400 dark:text-slate-500" />
-              <div className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-emerald-500 rounded-full border-2 border-white dark:border-slate-800" />
+        <div className="flex justify-center">
+          <div className="relative group cursor-help">
+            <motion.div
+              animate={isSyncing ? { 
+                scale: [1, 1.1, 1],
+                rotate: [0, 5, -5, 0]
+              } : { scale: 1, rotate: 0 }}
+              transition={{ repeat: Infinity, duration: 2 }}
+            >
+              <Cloud 
+                className={`w-6 h-6 transition-colors duration-500 ${
+                  isSyncing ? "text-amber-500" : "text-emerald-500"
+                }`} 
+              />
+            </motion.div>
+            {!isSyncing && (
+              <motion.div 
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white dark:border-slate-900 shadow-sm" 
+              />
+            )}
+            
+            {/* Tooltip on hover */}
+            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-3 py-1.5 bg-slate-900 text-white text-[10px] font-bold rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-[60] uppercase tracking-widest">
+              {isSyncing ? "Sincronizando..." : "Dados Sincronizados"}
             </div>
-            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Sincronizado</span>
           </div>
-          
-          <button 
-            onClick={() => setIsDarkMode(!isDarkMode)}
-            className="p-2 rounded-xl text-slate-400 dark:text-zinc-500 hover:text-indigo-600 transition-all"
-          >
-            {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
+        </div>
 
-          <button className="p-2 rounded-xl text-slate-400 dark:text-zinc-500 hover:text-indigo-600 transition-all">
-            <Settings className="w-5 h-5" />
-          </button>
-          
+        <div className="flex items-center justify-end gap-2">
           <button 
-            onClick={handleLogout}
-            className="p-2 rounded-xl text-slate-400 dark:text-zinc-500 hover:text-rose-500 transition-all"
-            title="Sair"
+            onClick={() => setActiveTab("settings")}
+            className={`p-2 rounded-xl transition-all ${activeTab === "settings" ? "text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10" : "text-slate-500 dark:text-zinc-400 hover:text-emerald-600"}`}
+            title="Configurações"
           >
-            <LogOut className="w-5 h-5" />
+            <Settings className="w-5 h-5" />
           </button>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto p-6 pb-32">
+      <main className="max-w-6xl mx-auto p-6 pt-24 pb-32">
         {/* Delete Confirmation Modal */}
         {showDeleteConfirm && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
@@ -825,16 +920,30 @@ function RotaBankApp() {
             >
               {/* Bento Grid Layout */}
               <div className="md:col-span-2 space-y-6">
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <h3 className="text-2xl font-black text-slate-900 dark:text-white">Olá, {user?.displayName?.split(' ')[0] || 'Usuário'}!</h3>
+                    <p className="text-slate-700 dark:text-zinc-300 font-bold text-xs uppercase tracking-widest">Bem-vindo de volta ao seu banco.</p>
+                  </div>
+                  <div className="flex -space-x-3">
+                    <div className="w-10 h-10 rounded-full border-2 border-white dark:border-slate-900 bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center text-emerald-600 font-bold text-xs">
+                      {user?.displayName?.charAt(0) || 'U'}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div className="relative group">
                     <BalanceCard 
-                      title="Saldo Disponível" 
+                      title="Saldo Líquido" 
                       amount={availableBalance} 
+                      secondaryTitle={projectedBalance !== availableBalance ? "Saldo Previsto" : "Faturamento Rota Financeira"}
+                      secondaryAmount={projectedBalance !== availableBalance ? projectedBalance : totalIncome}
                       icon={Wallet} 
                       variant="emerald"
                     />
                     <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 px-3 py-1 bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-full shadow-sm">
-                      <p className="text-[9px] font-bold text-slate-500 dark:text-zinc-500 uppercase tracking-widest whitespace-nowrap">
+                      <p className="text-[9px] font-bold text-slate-700 dark:text-zinc-300 uppercase tracking-widest whitespace-nowrap">
                         Mês Atual • Rota Financeira
                       </p>
                     </div>
@@ -875,11 +984,11 @@ function RotaBankApp() {
                   <div className="flex justify-between items-center mb-8">
                     <div>
                       <h3 className="text-xl font-bold text-slate-900 dark:text-zinc-100">Fluxo de Gastos</h3>
-                      <p className="text-slate-500 dark:text-zinc-500 text-xs font-medium">Últimos 7 dias</p>
+                      <p className="text-slate-700 dark:text-zinc-300 text-xs font-medium">Últimos 7 dias</p>
                     </div>
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-zinc-800 rounded-full">
                       <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span className="text-[10px] font-bold text-slate-600 dark:text-zinc-400 uppercase tracking-widest">Ativo</span>
+                      <span className="text-[10px] font-bold text-slate-800 dark:text-zinc-200 uppercase tracking-widest">Ativo</span>
                     </div>
                   </div>
                   
@@ -888,16 +997,16 @@ function RotaBankApp() {
                       <AreaChart data={chartData}>
                         <defs>
                           <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.3}/>
-                            <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? "#27272a" : "#e2e8f0"} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? "#3f3f46" : "#cbd5e1"} />
                         <XAxis 
                           dataKey="date" 
                           axisLine={false}
                           tickLine={false}
-                          tick={{ fontSize: 10, fill: isDarkMode ? "#71717a" : "#94a3b8", fontWeight: 600 }}
+                          tick={{ fontSize: 10, fill: isDarkMode ? "#d4d4d8" : "#475569", fontWeight: 700 }}
                           tickFormatter={(str) => new Date(str).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')}
                         />
                         <YAxis hide />
@@ -911,14 +1020,14 @@ function RotaBankApp() {
                             fontWeight: "bold",
                             color: isDarkMode ? "#f4f4f5" : "#0f172a"
                           }}
-                          itemStyle={{ color: "#4f46e5" }}
+                          itemStyle={{ color: "#10b981" }}
                           formatter={(value: number) => [`R$ ${value.toFixed(2)}`, 'Gasto']}
                           labelFormatter={(label) => new Date(label).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })}
                         />
                         <Area 
                           type="monotone" 
                           dataKey="total" 
-                          stroke="#4f46e5" 
+                          stroke="#10b981" 
                           strokeWidth={3}
                           fillOpacity={1} 
                           fill="url(#colorTotal)" 
@@ -942,7 +1051,7 @@ function RotaBankApp() {
                     <div className="p-5 rounded-3xl bg-emerald-500/10 border border-emerald-500/20">
                       <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest mb-1">Recebido no Mês</p>
                       <p className="text-2xl font-mono font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
-                        + R$ {monthlyIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        + R$ {(monthlyIncome + manualIncome).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
                     </div>
 
@@ -955,7 +1064,7 @@ function RotaBankApp() {
 
                     <div className="pt-6 border-t border-slate-100 dark:border-zinc-800">
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold text-slate-500 dark:text-zinc-500 uppercase tracking-widest">Saúde Financeira</span>
+                        <span className="text-xs font-bold text-slate-700 dark:text-zinc-300 uppercase tracking-widest">Saúde Financeira</span>
                         <span className="text-xs font-bold text-emerald-500">{(availableBalance / (monthlyIncome || 1) * 100).toFixed(0)}%</span>
                       </div>
                       <div className="h-2 w-full bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
@@ -989,55 +1098,97 @@ function RotaBankApp() {
               <div className="flex flex-col gap-6">
                 <div className="flex items-center justify-between">
                   <h3 className="text-2xl font-black flex items-center gap-3">
-                    <div className="p-3 bg-emerald-500 text-white rounded-2xl shadow-lg shadow-emerald-500/20">
+                    <div className="p-3 bg-emerald-600 text-white rounded-2xl shadow-lg shadow-emerald-600/20">
                       <Calendar className="w-6 h-6" />
                     </div>
-                    Histórico de Gastos
+                    Extrato Consolidado
                   </h3>
                   <div className="text-right">
-                    <p className="text-[10px] font-bold text-slate-500 dark:text-zinc-500 uppercase tracking-widest">Total no Período</p>
-                    <p className="text-xl font-mono font-medium text-rose-500">- R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                    <p className="text-[10px] font-bold text-slate-700 dark:text-zinc-300 uppercase tracking-widest">Saldo Líquido Atual</p>
+                    <p className={`text-xl font-mono font-black tabular-nums ${availableBalance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      R$ {availableBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </p>
+                    {projectedBalance !== availableBalance && (
+                      <p className="text-[9px] font-bold text-amber-600 uppercase tracking-widest mt-1">
+                        Previsto: R$ {projectedBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                {expenses.length === 0 ? (
+                {expenses.length === 0 && entries.length === 0 ? (
                   <Card className="text-center py-24 border-dashed border-2">
-                    <History className="w-16 h-16 text-slate-200 dark:text-zinc-800 mx-auto mb-4" />
-                    <p className="text-slate-500 dark:text-zinc-500 font-medium">Nenhum gasto registrado ainda.</p>
+                    <History className="w-16 h-16 text-slate-300 dark:text-zinc-700 mx-auto mb-4" />
+                    <p className="text-slate-700 dark:text-zinc-300 font-medium">Nenhum lançamento registrado ainda.</p>
                   </Card>
                 ) : (
                   <div className="grid grid-cols-1 gap-4">
-                    {expenses.map((expense, i) => (
+                    {[
+                      ...expenses.map(e => ({ ...e, source: 'rotabank' })),
+                      ...entries.map(e => ({
+                        id: e.id,
+                        amount: e.netAmount ?? e.valor_liquido ?? e.amount ?? 0,
+                        description: e.description || "Faturamento Rota Financeira",
+                        category: "Faturamento",
+                        date: e.date || new Date().toISOString(),
+                        type: "income" as const,
+                        source: 'rotafinanceira'
+                      }))
+                    ]
+                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                      .map((item, i) => (
                       <motion.div
-                        key={expense.id}
+                        key={item.id}
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.05 }}
                       >
-                        <Card className="p-6 flex items-center justify-between group hover:border-emerald-500/30 transition-all">
+                        <Card className={`p-6 flex items-center justify-between group hover:border-emerald-600/30 transition-all ${item.source === 'rotafinanceira' ? 'bg-emerald-500/5 border-emerald-500/10' : ''}`}>
                           <div className="flex items-center gap-5">
-                            <div className="p-4 rounded-3xl bg-slate-100 dark:bg-zinc-800 text-emerald-500 group-hover:scale-110 transition-transform">
-                              {CATEGORIES.find(c => c.value === expense.category)?.icon || <MoreHorizontal />}
+                            <div className={`p-4 rounded-3xl transition-transform group-hover:scale-110 ${item.type === 'income' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
+                              {item.source === 'rotafinanceira' ? <Cloud className="w-6 h-6" /> : item.type === 'income' ? <TrendingUp className="w-6 h-6" /> : <TrendingDown className="w-6 h-6" />}
                             </div>
                             <div>
-                              <h4 className="font-bold text-slate-900 dark:text-zinc-100">{expense.description || expense.category}</h4>
-                              <p className="text-[10px] text-slate-500 dark:text-zinc-500 font-bold uppercase tracking-widest mt-0.5">
-                                {expense.category} • {new Date(expense.date).toLocaleDateString('pt-BR')}
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-bold text-slate-900 dark:text-zinc-100">
+                                  {item.description}
+                                  {item.source === 'rotafinanceira' && <span className="ml-2 text-[8px] bg-emerald-600 text-white px-1.5 py-0.5 rounded-full uppercase tracking-tighter">Sincronizado</span>}
+                                </h4>
+                                {item.source === 'rotabank' && (
+                                  <div className="flex items-center gap-1.5">
+                                    <button 
+                                      onClick={() => toggleStatus(item.id, item.status)}
+                                      className={`text-[8px] px-1.5 py-0.5 rounded-full uppercase tracking-tighter font-bold transition-all hover:scale-105 active:scale-95 ${item.status === 'paid' ? 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200' : 'bg-amber-100 text-amber-600 hover:bg-amber-200'}`}
+                                    >
+                                      {item.status === 'paid' ? 'Pago' : 'Pendente'}
+                                    </button>
+                                    {item.paymentMethod && (
+                                      <span className="text-[8px] px-1.5 py-0.5 rounded-full uppercase tracking-tighter font-bold bg-slate-100 dark:bg-zinc-800 text-slate-500">
+                                        {PAYMENT_METHODS.find(pm => pm.value === item.paymentMethod)?.label || item.paymentMethod}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-700 dark:text-zinc-300 font-bold uppercase tracking-widest mt-0.5">
+                                {item.category} • {new Date(item.date).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric', day: '2-digit' })} {item.time && `• ${item.time}`}
                               </p>
                             </div>
                           </div>
                           <div className="flex items-center gap-6">
-                            <span className="text-xl font-mono font-medium tabular-nums text-rose-500">
-                              - R$ {expense.amount.toFixed(2)}
+                            <span className={`text-xl font-mono font-black tabular-nums ${item.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {item.type === 'income' ? '+' : '-'} R$ {item.amount.toFixed(2)}
                             </span>
-                            <motion.button 
-                              whileHover={{ scale: 1.2, rotate: 5 }}
-                              whileTap={{ scale: 0.9 }}
-                              onClick={() => deleteExpense(expense.id)}
-                              className="p-3 text-slate-300 dark:text-zinc-700 hover:text-rose-500 dark:hover:text-rose-500 transition-colors"
-                            >
-                              <Trash2 className="w-5 h-5" />
-                            </motion.button>
+                            {item.source === 'rotabank' && (
+                              <motion.button 
+                                whileHover={{ scale: 1.2, rotate: 5 }}
+                                whileTap={{ scale: 0.9 }}
+                                onClick={() => deleteExpense(item.id)}
+                                className="p-3 text-slate-400 dark:text-zinc-600 hover:text-rose-500 dark:hover:text-rose-500 transition-colors"
+                              >
+                                <Trash2 className="w-5 h-5" />
+                              </motion.button>
+                            )}
                           </div>
                         </Card>
                       </motion.div>
@@ -1045,174 +1196,147 @@ function RotaBankApp() {
                   </div>
                 )}
               </div>
-
-              {entries.length > 0 && (
-                <div className="flex flex-col gap-6 pt-12 border-t border-slate-200 dark:border-zinc-800">
-                  <h3 className="text-2xl font-black flex items-center gap-3">
-                    <div className="p-3 bg-blue-500 text-white rounded-2xl shadow-lg shadow-blue-500/20">
-                      <ArrowUpRight className="w-6 h-6" />
+            </motion.div>
+          ) : activeTab === "actions" ? (
+            <motion.div 
+              key="actions"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="max-w-xl mx-auto"
+            >
+              <Card className="p-10 shadow-2xl border-2 border-emerald-600/10 relative">
+                {/* Decorative background element */}
+                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-600/5 rounded-bl-full -mr-10 -mt-10 overflow-hidden" />
+                
+                <div className="relative z-10">
+                  <div className="flex items-start justify-between mb-10">
+                    <div>
+                      <h3 className="text-3xl font-black font-display text-slate-900 dark:text-white">Lançar</h3>
+                      <p className="text-slate-700 dark:text-zinc-300 font-bold text-[10px] uppercase tracking-[0.2em] mt-2 opacity-70">Registre suas movimentações financeiras</p>
                     </div>
-                    Entradas Sincronizadas
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {entries.map((entry, i) => (
-                      <motion.div
-                        key={entry.id}
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        transition={{ delay: i * 0.1 }}
-                      >
-                        <Card className="p-6 flex items-center justify-between bg-blue-500/5 border-blue-500/20">
-                          <div className="flex items-center gap-4">
-                            <div className="p-3 bg-blue-500/10 text-blue-500 rounded-2xl">
-                              <TrendingUp className="w-5 h-5" />
-                            </div>
-                            <div>
-                              <p className="font-bold text-slate-900 dark:text-zinc-100 text-sm">Rota Financeira</p>
-                              <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">ID: {entry.id.substring(0, 8)}</p>
-                            </div>
+                    <button 
+                      onClick={() => setShowMoreOptions(!showMoreOptions)}
+                      className={`px-4 py-2 rounded-xl transition-all duration-300 ${showMoreOptions ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/20' : 'bg-slate-100 dark:bg-zinc-800 text-slate-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:text-emerald-600'}`}
+                    >
+                      <span className="text-[10px] font-black uppercase tracking-widest">{showMoreOptions ? 'menos' : 'mais'}</span>
+                    </button>
+                  </div>
+
+                  <div className="flex p-1.5 bg-slate-100 dark:bg-zinc-800/50 rounded-2xl mb-10">
+                    <button 
+                      onClick={() => setTransactionType("expense")}
+                      className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-sm transition-all duration-300 ${transactionType === "expense" ? "bg-white dark:bg-zinc-700 text-rose-600 shadow-lg shadow-rose-600/10 scale-[1.02]" : "text-slate-500 dark:text-zinc-500 hover:text-slate-700"}`}
+                    >
+                      <TrendingDown className="w-4 h-4" />
+                      Gasto
+                    </button>
+                    <button 
+                      onClick={() => setTransactionType("income")}
+                      className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-sm transition-all duration-300 ${transactionType === "income" ? "bg-white dark:bg-zinc-700 text-emerald-600 shadow-lg shadow-emerald-600/10 scale-[1.02]" : "text-slate-500 dark:text-zinc-500 hover:text-slate-700"}`}
+                    >
+                      <TrendingUp className="w-4 h-4" />
+                      Receita
+                    </button>
+                  </div>
+
+                  <form onSubmit={(e) => handleSubmit(e, transactionType)} className="space-y-8">
+                    <div className="space-y-8">
+                      <Input 
+                        label="Valor (R$)" 
+                        type="number" 
+                        step="0.01" 
+                        placeholder="0,00"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        required
+                        className="text-lg font-bold px-4 py-3"
+                      />
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <CustomSelect 
+                          label="Categoria"
+                          options={allCategories}
+                          value={category}
+                          onChange={setCategory}
+                          className="px-4 py-3 text-sm"
+                        />
+                        <CustomSelect 
+                          label="Pagamento"
+                          options={PAYMENT_METHODS}
+                          value={paymentMethod}
+                          onChange={setPaymentMethod}
+                          className="px-4 py-3 text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-bold text-slate-800 dark:text-zinc-200 uppercase tracking-widest ml-2">Status</label>
+                      <div className="flex p-1.5 bg-slate-100 dark:bg-zinc-800/50 rounded-2xl">
+                        <button 
+                          type="button"
+                          onClick={() => setStatus("paid")}
+                          className={`flex-1 py-3 rounded-xl font-bold text-xs transition-all duration-300 ${status === "paid" ? "bg-white dark:bg-zinc-700 text-emerald-600 shadow-md" : "text-slate-500 dark:text-zinc-500"}`}
+                        >
+                          Pago
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => setStatus("pending")}
+                          className={`flex-1 py-3 rounded-xl font-bold text-xs transition-all duration-300 ${status === "pending" ? "bg-white dark:bg-zinc-700 text-amber-600 shadow-md" : "text-slate-500 dark:text-zinc-500"}`}
+                        >
+                          Pendente
+                        </button>
+                      </div>
+                    </div>
+
+                    <AnimatePresence>
+                      {showMoreOptions && (
+                        <motion.div 
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-visible space-y-8"
+                        >
+                          <Input 
+                            label="Descrição" 
+                            placeholder={transactionType === "expense" ? "Ex: Almoço no shopping" : "Ex: Venda de produto"}
+                            value={description}
+                            onChange={(e) => setDescription(e.target.value)}
+                            className="px-4 py-3 text-sm"
+                          />
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <Input 
+                              label="Data" 
+                              type="date"
+                              value={date}
+                              onChange={(e) => setDate(e.target.value)}
+                              required
+                              className="px-4 py-3 text-sm"
+                            />
+                            <Input 
+                              label="Horário" 
+                              type="time"
+                              value={time}
+                              onChange={(e) => setTime(e.target.value)}
+                              required
+                              className="px-4 py-3 text-sm"
+                            />
                           </div>
-                          <p className="text-xl font-mono font-medium text-blue-500 tabular-nums">
-                            + R$ {parseCurrency(entry.netAmount ?? entry.valor_liquido ?? entry.amount ?? 0).toFixed(2)}
-                          </p>
-                        </Card>
-                      </motion.div>
-                    ))}
-                  </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    <Button 
+                      type="submit" 
+                      className={`w-full mt-6 py-5 text-lg font-black tracking-wider uppercase transition-all duration-500 ${transactionType === "expense" ? "bg-rose-600 hover:bg-rose-700 shadow-xl shadow-rose-600/20" : "bg-emerald-600 hover:bg-emerald-700 shadow-xl shadow-emerald-600/20"}`}
+                    >
+                      Confirmar {transactionType === "expense" ? "Gasto" : "Receita"}
+                    </Button>
+                  </form>
                 </div>
-              )}
-            </motion.div>
-          ) : activeTab === "transfer" ? (
-            <motion.div 
-              key="transfer"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="max-w-xl mx-auto space-y-8"
-            >
-              <div className="text-center space-y-2">
-                <h3 className="text-3xl font-black font-display text-slate-900 dark:text-white">Transferir</h3>
-                <p className="text-slate-500">Envie dinheiro via PIX de forma instantânea.</p>
-              </div>
-
-              <Card className="p-8 space-y-8">
-                <div className="flex gap-4">
-                  <button className="flex-1 p-4 rounded-3xl bg-indigo-600 text-white flex flex-col items-center gap-2 shadow-lg shadow-indigo-600/20">
-                    <QrCode className="w-6 h-6" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Ler QR Code</span>
-                  </button>
-                  <button className="flex-1 p-4 rounded-3xl bg-slate-100 dark:bg-zinc-800 text-slate-900 dark:text-white flex flex-col items-center gap-2 border border-slate-200 dark:border-zinc-700">
-                    <UserIcon className="w-6 h-6" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Contatos</span>
-                  </button>
-                </div>
-
-                <div className="space-y-6">
-                  <Input label="Chave PIX" placeholder="CPF, E-mail, Celular ou Chave Aleatória" />
-                  <Input label="Valor (R$)" type="number" placeholder="0,00" />
-                  <Input label="Mensagem (Opcional)" placeholder="No que você está pensando?" />
-                </div>
-
-                <Button className="w-full py-5 text-lg font-bold shadow-xl shadow-indigo-600/20">
-                  Confirmar Transferência
-                </Button>
-              </Card>
-
-              <div className="p-6 rounded-3xl bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/30 flex items-start gap-4">
-                <AlertCircle className="w-6 h-6 text-amber-600 dark:text-amber-400 shrink-0" />
-                <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
-                  <strong>Atenção:</strong> Verifique os dados do destinatário antes de confirmar. Transferências PIX são liquidadas em poucos segundos e não podem ser canceladas.
-                </p>
-              </div>
-            </motion.div>
-          ) : activeTab === "cards" ? (
-            <motion.div 
-              key="cards"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="max-w-xl mx-auto space-y-8"
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="text-3xl font-black font-display text-slate-900 dark:text-white">Meus Cartões</h3>
-                <Button variant="secondary" className="rounded-full px-6">
-                  <Plus className="w-4 h-4 mr-2" /> Novo Cartão
-                </Button>
-              </div>
-
-              {/* Visual Credit Card */}
-              <motion.div 
-                whileHover={{ scale: 1.02, rotateY: 5 }}
-                className="relative aspect-[1.586/1] w-full bg-gradient-to-br from-indigo-600 via-violet-600 to-purple-700 rounded-[2.5rem] p-8 text-white shadow-2xl shadow-indigo-600/30 overflow-hidden"
-              >
-                {/* Card Pattern Overlay */}
-                <div className="absolute inset-0 opacity-10 pointer-events-none">
-                  <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_50%,#fff_1px,transparent_1px)] bg-[length:20px_20px]" />
-                </div>
-
-                <div className="relative h-full flex flex-col justify-between">
-                  <div className="flex justify-between items-start">
-                    <div className="space-y-1">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-60">RotaBank Platinum</p>
-                      <div className="w-12 h-10 bg-amber-400/20 rounded-lg border border-amber-400/30 backdrop-blur-sm" />
-                    </div>
-                    <div className="flex -space-x-3">
-                      <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm" />
-                      <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm" />
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-4">
-                      <p className="text-2xl font-mono tracking-[0.15em] font-medium">
-                        {showCardDetails ? "4532 8890 1223 4456" : "•••• •••• •••• 4456"}
-                      </p>
-                      <button 
-                        onClick={() => setShowCardDetails(!showCardDetails)}
-                        className="p-2 hover:bg-white/10 rounded-full transition-colors"
-                      >
-                        {showCardDetails ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                      </button>
-                    </div>
-                    
-                    <div className="flex justify-between items-end">
-                      <div className="space-y-1">
-                        <p className="text-[8px] font-bold uppercase tracking-widest opacity-60">Titular</p>
-                        <p className="text-sm font-bold uppercase tracking-widest">{user?.displayName || "Cliente RotaBank"}</p>
-                      </div>
-                      <div className="text-right space-y-1">
-                        <p className="text-[8px] font-bold uppercase tracking-widest opacity-60">Validade</p>
-                        <p className="text-sm font-bold font-mono">12/29</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <Card className="p-6 space-y-2">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Limite Disponível</p>
-                  <p className="text-xl font-mono font-medium text-emerald-500">R$ 4.250,00</p>
-                </Card>
-                <Card className="p-6 space-y-2">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Fatura Atual</p>
-                  <p className="text-xl font-mono font-medium text-rose-500">R$ 1.120,45</p>
-                </Card>
-              </div>
-
-              <Card className="p-6 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 bg-slate-100 dark:bg-zinc-800 rounded-2xl">
-                    <Settings className="w-5 h-5 text-slate-500" />
-                  </div>
-                  <div>
-                    <p className="font-bold text-slate-900 dark:text-white">Ajustar Limite</p>
-                    <p className="text-xs text-slate-500">Gerencie seu poder de compra</p>
-                  </div>
-                </div>
-                <Button variant="ghost" className="p-2">
-                  <ArrowUpRight className="w-5 h-5" />
-                </Button>
               </Card>
             </motion.div>
           ) : activeTab === "reports" ? (
@@ -1226,8 +1350,8 @@ function RotaBankApp() {
               <div className="flex items-center justify-between">
                 <h3 className="text-3xl font-black font-display text-slate-900 dark:text-white">Relatórios</h3>
                 <div className="flex gap-2">
-                  <button className="px-4 py-2 bg-indigo-600 text-white rounded-full text-xs font-bold">Mês</button>
-                  <button className="px-4 py-2 bg-slate-100 dark:bg-zinc-800 text-slate-500 rounded-full text-xs font-bold">Ano</button>
+                  <button className="px-4 py-2 bg-emerald-600 text-white rounded-full text-xs font-bold">Mês</button>
+                  <button className="px-4 py-2 bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 rounded-full text-xs font-bold">Ano</button>
                 </div>
               </div>
 
@@ -1236,23 +1360,23 @@ function RotaBankApp() {
                   <div className="flex items-center justify-between mb-8">
                     <div>
                       <h4 className="font-bold text-slate-900 dark:text-white">Gastos por Categoria</h4>
-                      <p className="text-xs text-slate-500">Distribuição mensal</p>
+                      <p className="text-xs text-slate-700 dark:text-zinc-300">Distribuição mensal</p>
                     </div>
-                    <PieChart className="w-5 h-5 text-indigo-600" />
+                    <PieChart className="w-5 h-5 text-emerald-600" />
                   </div>
 
                   <div className="h-80 w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={CATEGORIES.map(cat => ({
+                      <BarChart data={allCategories.map(cat => ({
                         name: cat.label,
-                        total: expenses.filter(e => e.category === cat.value).reduce((acc, curr) => acc + curr.amount, 0)
+                        total: expenses.filter(e => e.category === cat.value && e.type === "expense" && e.status === "paid").reduce((acc, curr) => acc + curr.amount, 0)
                       }))}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? "#27272a" : "#e2e8f0"} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? "#3f3f46" : "#cbd5e1"} />
                         <XAxis 
                           dataKey="name" 
                           axisLine={false}
                           tickLine={false}
-                          tick={{ fontSize: 10, fill: isDarkMode ? "#71717a" : "#94a3b8", fontWeight: 600 }}
+                          tick={{ fontSize: 10, fill: isDarkMode ? "#d4d4d8" : "#475569", fontWeight: 700 }}
                         />
                         <YAxis hide />
                         <Tooltip 
@@ -1267,8 +1391,8 @@ function RotaBankApp() {
                           }}
                         />
                         <Bar dataKey="total" radius={[8, 8, 0, 0]}>
-                          {CATEGORIES.map((_, index) => (
-                            <Cell key={`cell-${index}`} fill={index === 0 ? "#4f46e5" : index === 1 ? "#10b981" : index === 2 ? "#f59e0b" : index === 3 ? "#ef4444" : "#6366f1"} />
+                          {allCategories.map((_, index) => (
+                            <Cell key={`cell-${index}`} fill={index === 0 ? "#10b981" : index === 1 ? "#34d399" : index === 2 ? "#fbbf24" : index === 3 ? "#f87171" : "#059669"} />
                           ))}
                         </Bar>
                       </BarChart>
@@ -1280,15 +1404,16 @@ function RotaBankApp() {
                   <h4 className="font-bold text-slate-900 dark:text-white">Maiores Gastos</h4>
                   <div className="space-y-6">
                     {expenses
+                      .filter(e => e.type === "expense" && e.status === "paid")
                       .sort((a, b) => b.amount - a.amount)
                       .slice(0, 5)
                       .map((expense, i) => (
                         <div key={expense.id} className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-zinc-800 flex items-center justify-center text-xs">
+                            <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-zinc-800 flex items-center justify-center text-xs font-bold">
                               {i + 1}
                             </div>
-                            <span className="text-sm font-medium text-slate-700 dark:text-zinc-300 truncate max-w-[100px]">
+                            <span className="text-sm font-bold text-slate-800 dark:text-zinc-200 truncate max-w-[100px]">
                               {expense.description || expense.category}
                             </span>
                           </div>
@@ -1296,26 +1421,207 @@ function RotaBankApp() {
                         </div>
                       ))}
                   </div>
-                  <Button variant="secondary" className="w-full">Exportar PDF</Button>
+                  <Button variant="secondary" className="w-full text-slate-800 dark:text-zinc-200 font-bold">Exportar PDF</Button>
                 </Card>
               </div>
             </motion.div>
-          ) : (
+          ) : activeTab === "settings" ? (
             <motion.div 
-              key="placeholder"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex flex-col items-center justify-center py-32 text-center"
+              key="settings"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="max-w-2xl mx-auto space-y-8"
             >
-              <div className="w-20 h-20 bg-indigo-100 dark:bg-indigo-500/10 text-indigo-600 rounded-3xl flex items-center justify-center mb-6">
-                <Settings className="w-10 h-10" />
+              <div className="flex items-center justify-between">
+                <h3 className="text-3xl font-black font-display text-slate-900 dark:text-white">Configurações</h3>
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-100 dark:bg-emerald-500/10 rounded-full">
+                  <Settings className="w-4 h-4 text-emerald-600" />
+                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Painel de Controle</span>
+                </div>
               </div>
-              <h3 className="text-2xl font-black mb-2">Em Breve</h3>
-              <p className="text-slate-500 dark:text-slate-400 max-w-xs">
-                A funcionalidade de {activeTab === 'transfer' ? 'Transferência' : activeTab === 'cards' ? 'Cartões' : 'Relatórios'} está sendo preparada para você.
-              </p>
+
+              {/* Profile Section */}
+              <Card className="p-8 space-y-6">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-zinc-800 flex items-center justify-center text-emerald-600">
+                    <UserIcon className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 dark:text-white">Perfil</h4>
+                    <p className="text-xs text-slate-500">Gerencie suas informações básicas</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-4">
+                  <Input 
+                    label="Nome de Exibição" 
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder="Seu nome"
+                  />
+                  <Button 
+                    onClick={async () => {
+                      if (!user || !displayName) return;
+                      setIsSyncing(true);
+                      try {
+                        await updateProfile(user, { displayName });
+                        setUser({ ...user, displayName } as User);
+                        alert("Perfil atualizado com sucesso!");
+                      } catch (error) {
+                        console.error("Update profile failed", error);
+                      } finally {
+                        setIsSyncing(false);
+                      }
+                    }}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    Salvar Alterações
+                  </Button>
+                </div>
+              </Card>
+
+              {/* Appearance Section */}
+              <Card className="p-8 space-y-6">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-zinc-800 flex items-center justify-center text-amber-500">
+                    {isDarkMode ? <Moon className="w-6 h-6" /> : <Sun className="w-6 h-6" />}
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 dark:text-white">Aparência</h4>
+                    <p className="text-xs text-slate-500">Personalize o visual do seu app</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-2xl border border-slate-100 dark:border-zinc-800">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${isDarkMode ? 'bg-zinc-700 text-amber-400' : 'bg-white text-slate-400 shadow-sm'}`}>
+                      {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+                    </div>
+                    <span className="font-bold text-sm">{isDarkMode ? 'Modo Escuro' : 'Modo Claro'}</span>
+                  </div>
+                  <button 
+                    onClick={() => setIsDarkMode(!isDarkMode)}
+                    className={`w-14 h-8 rounded-full p-1 transition-colors duration-300 ${isDarkMode ? 'bg-emerald-600' : 'bg-slate-200'}`}
+                  >
+                    <motion.div 
+                      animate={{ x: isDarkMode ? 24 : 0 }}
+                      className="w-6 h-6 bg-white rounded-full shadow-sm"
+                    />
+                  </button>
+                </div>
+              </Card>
+
+              {/* Categories Section */}
+              <Card className="p-8 space-y-6">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-zinc-800 flex items-center justify-center text-purple-500">
+                    <Sparkles className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 dark:text-white">Categorias</h4>
+                    <p className="text-xs text-slate-500">Crie categorias personalizadas</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <Input 
+                        label="Nova Categoria" 
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value)}
+                        placeholder="Ex: Assinaturas"
+                      />
+                    </div>
+                    <div className="pt-6">
+                      <Button 
+                        onClick={async () => {
+                          if (!user || !newCategoryName) return;
+                          setIsSyncing(true);
+                          try {
+                            await addDoc(collection(db, "users", user.uid, "custom_categories"), {
+                              name: newCategoryName,
+                              createdAt: new Date().toISOString()
+                            });
+                            setNewCategoryName("");
+                          } catch (error) {
+                            console.error("Add category failed", error);
+                          } finally {
+                            setIsSyncing(false);
+                          }
+                        }}
+                        className="h-[52px] bg-emerald-600 hover:bg-emerald-700"
+                      >
+                        Adicionar
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {customCategories.map((cat) => (
+                      <div key={cat.value} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-zinc-800/50 rounded-xl border border-slate-100 dark:border-zinc-800 group">
+                        <div className="flex items-center gap-2 truncate">
+                          <Sparkles className="w-3 h-3 text-purple-500 shrink-0" />
+                          <span className="text-xs font-bold truncate">{cat.label}</span>
+                        </div>
+                        <button 
+                          onClick={async () => {
+                            if (!user) return;
+                            setIsSyncing(true);
+                            try {
+                              const q = query(collection(db, "users", user.uid, "custom_categories"), where("name", "==", cat.value));
+                              const snap = await getDocs(q);
+                              const deletePromises = snap.docs.map(d => deleteDoc(d.ref));
+                              await Promise.all(deletePromises);
+                            } catch (error) {
+                              console.error("Delete category failed", error);
+                            } finally {
+                              setIsSyncing(false);
+                            }
+                          }}
+                          className="text-slate-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+
+              {/* Account Section */}
+              <Card className="p-8 space-y-6 border-rose-500/10">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-500/10 flex items-center justify-center text-rose-500">
+                    <LogOut className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 dark:text-white">Conta</h4>
+                    <p className="text-xs text-slate-500">Gerencie sua sessão e conta</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <Button 
+                    variant="secondary" 
+                    onClick={handleLogout}
+                    className="w-full flex items-center justify-center gap-2 text-rose-600 border-rose-100 hover:bg-rose-50"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Sair da Conta
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="w-full text-slate-400 hover:text-rose-600 text-[10px] font-bold uppercase tracking-widest"
+                  >
+                    Excluir Conta Permanentemente
+                  </Button>
+                </div>
+              </Card>
             </motion.div>
-          )}
+          ) : null}
         </AnimatePresence>
       </main>
 
@@ -1323,19 +1629,18 @@ function RotaBankApp() {
       <motion.button
         whileHover={{ scale: 1.1, rotate: 5 }}
         whileTap={{ scale: 0.9 }}
-        onClick={() => setIsAdding(true)}
-        className="fixed bottom-24 right-6 w-14 h-14 bg-indigo-600 text-white rounded-2xl shadow-xl shadow-indigo-600/30 flex items-center justify-center z-40"
+        onClick={() => setActiveTab("actions")}
+        className="fixed bottom-24 right-6 w-14 h-14 bg-emerald-600 text-white rounded-2xl shadow-xl shadow-emerald-600/30 flex items-center justify-center z-40"
       >
-        <Sparkles className="w-6 h-6" />
+        <Plus className="w-6 h-6" />
       </motion.button>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 h-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur-lg border-t border-slate-100 dark:border-slate-800 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] flex items-center justify-around px-4 z-50 transition-colors duration-300">
+      <nav className="fixed bottom-0 left-0 right-0 h-20 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border-t border-slate-100 dark:border-slate-800 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] flex items-center justify-around px-4 z-50 transition-colors duration-300">
         {[
           { id: 'home', icon: Home, label: 'Início' },
+          { id: 'actions', icon: Plus, label: 'Lançar' },
           { id: 'history', icon: History, label: 'Extrato' },
-          { id: 'transfer', icon: ArrowUpRight, label: 'Transferir' },
-          { id: 'cards', icon: CreditCard, label: 'Cartões' },
           { id: 'reports', icon: BarChart3, label: 'Relatórios' },
         ].map((item) => {
           const isActive = activeTab === item.id;
@@ -1350,13 +1655,13 @@ function RotaBankApp() {
               {isActive && (
                 <motion.div 
                   layoutId="nav-indicator"
-                  className="absolute top-0 w-1 h-1 bg-indigo-600 rounded-full"
+                  className="absolute top-0 w-1 h-1 bg-emerald-600 rounded-full"
                 />
               )}
-              <div className={`p-2 rounded-xl transition-all ${isActive ? 'bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500 hover:text-indigo-600'}`}>
+              <div className={`p-2 rounded-xl transition-all ${isActive ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500 hover:text-emerald-600'}`}>
                 <Icon className="w-5 h-5" />
               </div>
-              <span className={`text-[9px] font-black uppercase tracking-tight ${isActive ? 'text-indigo-700 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500'}`}>
+              <span className={`text-[9px] font-black uppercase tracking-tight ${isActive ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`}>
                 {item.label}
               </span>
             </button>
@@ -1381,7 +1686,17 @@ function RotaBankApp() {
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
               className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-4xl p-8 relative z-10 shadow-2xl"
             >
-              <h2 className="text-2xl font-black mb-8 font-display">Novo Gasto</h2>
+              <div className="flex items-start justify-between mb-8">
+                <h2 className="text-2xl font-black font-display">Novo Lançamento</h2>
+                <button 
+                  type="button"
+                  onClick={() => setShowMoreOptions(!showMoreOptions)}
+                  className={`px-3 py-1.5 rounded-xl transition-all duration-300 ${showMoreOptions ? 'bg-rose-600 text-white' : 'bg-slate-100 dark:bg-zinc-800 text-slate-500'}`}
+                >
+                  <span className="text-[9px] font-black uppercase tracking-widest">{showMoreOptions ? 'menos' : 'mais'}</span>
+                </button>
+              </div>
+
               <form onSubmit={handleSubmit} className="flex flex-col gap-6">
                 <Input 
                   label="Valor (R$)" 
@@ -1391,31 +1706,89 @@ function RotaBankApp() {
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   required
+                  className="px-4 py-3 text-lg font-bold"
                 />
-                <CustomSelect 
-                  label="Categoria"
-                  options={CATEGORIES}
-                  value={category}
-                  onChange={setCategory}
-                />
-                <Input 
-                  label="Descrição" 
-                  placeholder="Ex: Almoço no shopping"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-                <Input 
-                  label="Data" 
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  required
-                />
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <CustomSelect 
+                    label="Categoria"
+                    options={allCategories}
+                    value={category}
+                    onChange={setCategory}
+                    className="px-4 py-3 text-sm"
+                  />
+                  <CustomSelect 
+                    label="Pagamento"
+                    options={PAYMENT_METHODS}
+                    value={paymentMethod}
+                    onChange={setPaymentMethod}
+                    className="px-4 py-3 text-sm"
+                  />
+                </div>
+                
+                <div className="flex flex-col gap-2">
+                  <label className="text-[10px] font-bold text-slate-800 dark:text-zinc-200 uppercase tracking-widest ml-2">Status</label>
+                  <div className="flex p-1.5 bg-slate-100 dark:bg-zinc-800 rounded-2xl">
+                    <button 
+                      type="button"
+                      onClick={() => setStatus("paid")}
+                      className={`flex-1 py-3 rounded-xl font-bold text-xs transition-all ${status === "paid" ? "bg-white dark:bg-zinc-700 text-emerald-600 shadow-sm" : "text-slate-500 dark:text-zinc-500"}`}
+                    >
+                      Pago
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setStatus("pending")}
+                      className={`flex-1 py-3 rounded-xl font-bold text-xs transition-all ${status === "pending" ? "bg-white dark:bg-zinc-700 text-amber-600 shadow-sm" : "text-slate-500 dark:text-zinc-500"}`}
+                    >
+                      Pendente
+                    </button>
+                  </div>
+                </div>
+
+                <AnimatePresence>
+                  {showMoreOptions && (
+                    <motion.div 
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-visible space-y-6"
+                    >
+                      <Input 
+                        label="Descrição" 
+                        placeholder="Ex: Almoço no shopping"
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        className="px-4 py-3 text-sm"
+                      />
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <Input 
+                          label="Data" 
+                          type="date"
+                          value={date}
+                          onChange={(e) => setDate(e.target.value)}
+                          required
+                          className="px-4 py-3 text-sm"
+                        />
+                        <Input 
+                          label="Horário" 
+                          type="time"
+                          value={time}
+                          onChange={(e) => setTime(e.target.value)}
+                          required
+                          className="px-4 py-3 text-sm"
+                        />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
                 <div className="flex gap-4 mt-4">
-                  <Button variant="secondary" onClick={() => setIsAdding(false)} className="flex-1">
+                  <Button variant="secondary" onClick={() => setIsAdding(false)} className="flex-1 py-4">
                     Cancelar
                   </Button>
-                  <Button type="submit" className="flex-1">
+                  <Button type="submit" className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20">
                     Salvar
                   </Button>
                 </div>

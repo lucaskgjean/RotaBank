@@ -61,6 +61,10 @@ service cloud.firestore {
       return data.email is string && data.role in ['admin', 'client'];
     }
 
+    function isValidCustomCategory(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 50;
+    }
+
     // Rules
     match /rotabank_expenses/{expenseId} {
       allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
@@ -84,6 +88,13 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'client';
       allow update: if isAuthenticated() && (isAdmin() || (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role));
       allow delete: if isAdmin();
+
+      match /custom_categories/{categoryId} {
+        allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+        allow create: if isAuthenticated() && isOwner(userId) && isValidCustomCategory(request.resource.data);
+        allow update: if isAuthenticated() && isOwner(userId) && isValidCustomCategory(request.resource.data);
+        allow delete: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      }
     }
 
     match /test/connection {
