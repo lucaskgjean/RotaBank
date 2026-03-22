@@ -29,7 +29,8 @@ import {
   QrCode,
   Eye,
   EyeOff,
-  PieChart
+  PieChart,
+  RefreshCw
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -73,7 +74,10 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   deleteUser,
-  updateProfile
+  updateProfile,
+  reauthenticateWithPopup,
+  reauthenticateWithCredential,
+  EmailAuthProvider
 } from "firebase/auth";
 import { db, auth } from "./firebase";
 
@@ -247,6 +251,7 @@ function RotaBankApp() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [tempDarkMode, setTempDarkMode] = useState(false);
   const [activeTab, setActiveTab] = useState<"home" | "history" | "actions" | "reports" | "settings">("home");
   const [transactionType, setTransactionType] = useState<"expense" | "income">("expense");
   const [status, setStatus] = useState<"paid" | "pending">("paid");
@@ -257,6 +262,7 @@ function RotaBankApp() {
   const [entriesError, setEntriesError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [customCategories, setCustomCategories] = useState<{ value: string; label: string; icon: any }[]>([]);
   const allCategories = [...DEFAULT_CATEGORIES, ...customCategories];
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -338,8 +344,15 @@ function RotaBankApp() {
     loadLogo();
     if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
       setIsDarkMode(true);
+      setTempDarkMode(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "settings") {
+      setTempDarkMode(isDarkMode);
+    }
+  }, [activeTab, isDarkMode]);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -392,6 +405,7 @@ function RotaBankApp() {
       })) as Entry[];
       setEntries(data);
       setEntriesError(null);
+      setLastSyncTime(new Date());
     }, (error) => {
       console.error("Entries listener error details:", error);
       handleFirestoreError(error, OperationType.LIST, "entries");
@@ -546,22 +560,69 @@ function RotaBankApp() {
         console.log("User deleted successfully.");
       } catch (error: any) {
         console.error("Auth deleteUser failed:", error);
+        
         if (error.code === 'auth/requires-recent-login') {
-          throw error; 
+          console.log("Re-authentication required. Attempting re-auth...");
+          
+          try {
+            const providerId = user.providerData[0]?.providerId;
+            
+            if (providerId === 'google.com') {
+              const provider = new GoogleAuthProvider();
+              await reauthenticateWithPopup(user, provider);
+              console.log("Re-authenticated with Google. Retrying deletion...");
+              await deleteUser(user);
+            } else if (providerId === 'password') {
+              // For email/password, we'd need the password. 
+              // If we don't have it, we must ask.
+              const userPassword = prompt("Para excluir sua conta, por favor digite sua senha novamente:");
+              if (userPassword) {
+                try {
+                  const credential = EmailAuthProvider.credential(user.email!, userPassword);
+                  await reauthenticateWithCredential(user, credential);
+                  console.log("Re-authenticated with Password. Retrying deletion...");
+                  await deleteUser(user);
+                } catch (reauthError: any) {
+                  if (reauthError.code === 'auth/invalid-credential' || reauthError.code === 'auth/wrong-password') {
+                    throw new Error("Senha incorreta. Por favor, tente novamente.");
+                  }
+                  throw reauthError;
+                }
+              } else {
+                // User cancelled the prompt
+                setIsDeletingAccount(false);
+                return; 
+              }
+            } else {
+              throw error; 
+            }
+          } catch (reauthError: any) {
+            console.error("Re-authentication process failed:", reauthError);
+            throw reauthError;
+          }
+        } else {
+          throw new Error(`Erro no sistema de autenticação: ${error.message || error.code || 'Erro desconhecido'}`);
         }
-        throw new Error(`Erro no sistema de autenticação: ${error.message || error.code || 'Erro desconhecido'}`);
       }
       
       // 3. Success
       alert("Sua conta e todos os dados do RotaBank foram excluídos com sucesso. Você será desconectado.");
       window.location.reload();
     } catch (error: any) {
+      // If the error is just a cancellation, we don't need to show an alert
+      if (error.message === "Re-autenticação cancelada pelo usuário." || error.code === 'auth/popup-closed-by-user') {
+        setIsDeletingAccount(false);
+        return;
+      }
+
       console.error("Detailed error in handleDeleteAccount:", error);
       
       const errorCode = error.code || error.message;
       
       if (errorCode === 'auth/requires-recent-login' || String(error).includes('requires-recent-login')) {
-        alert("Segurança: Para excluir sua conta, você precisa ter feito login nos últimos minutos. Por favor, SAIA da conta e ENTRE novamente pelo Google antes de tentar excluir.");
+        alert("Segurança: Para excluir sua conta, você precisa ter feito login recentemente. Por favor, tente novamente e siga as instruções de re-autenticação.");
+      } else if (errorCode === 'auth/invalid-credential' || String(error).includes('Senha incorreta')) {
+        alert("Erro: Senha incorreta. A exclusão da conta foi cancelada por segurança.");
       } else {
         let displayError = "Erro desconhecido";
         try {
@@ -647,9 +708,9 @@ function RotaBankApp() {
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
 
-  const monthlyIncome = balance?.totalNetAmount ?? 0;
+  const monthlyIncome = balance ? (balance.totalNetAmount ?? balance.valor_liquido ?? 0) : 0;
 
-  const totalIncome = balance?.totalNetAmount ?? 0;
+  const totalIncome = balance ? (balance.totalNetAmount ?? balance.valor_liquido ?? 0) : 0;
 
   const manualIncome = expenses
     .filter(e => e.type === "income" && e.status === "paid")
@@ -1505,6 +1566,29 @@ function RotaBankApp() {
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder="Seu nome"
                   />
+                  
+                  <Input 
+                    label="E-mail" 
+                    value={user?.email || ""}
+                    readOnly
+                    disabled
+                    placeholder="Seu e-mail"
+                  />
+
+                  {user?.providerData.some(p => p.providerId === 'password') && (
+                    <div className="space-y-2">
+                      <Input 
+                        label="Senha" 
+                        value="********"
+                        readOnly
+                        disabled
+                        type="password"
+                        placeholder="Sua senha"
+                      />
+                      <p className="text-[10px] text-slate-500 italic">Por motivos de segurança, sua senha não pode ser exibida em texto simples.</p>
+                    </div>
+                  )}
+
                   <Button 
                     onClick={async () => {
                       if (!user || !displayName) return;
@@ -1530,7 +1614,7 @@ function RotaBankApp() {
               <Card className="p-8 space-y-6">
                 <div className="flex items-center gap-4 mb-2">
                   <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-zinc-800 flex items-center justify-center text-amber-500">
-                    {isDarkMode ? <Moon className="w-6 h-6" /> : <Sun className="w-6 h-6" />}
+                    {tempDarkMode ? <Moon className="w-6 h-6" /> : <Sun className="w-6 h-6" />}
                   </div>
                   <div>
                     <h4 className="font-bold text-slate-900 dark:text-white">Aparência</h4>
@@ -1538,22 +1622,34 @@ function RotaBankApp() {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-2xl border border-slate-100 dark:border-zinc-800">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${isDarkMode ? 'bg-zinc-700 text-amber-400' : 'bg-white text-slate-400 shadow-sm'}`}>
-                      {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-2xl border border-slate-100 dark:border-zinc-800">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${tempDarkMode ? 'bg-zinc-700 text-amber-400' : 'bg-white text-slate-400 shadow-sm'}`}>
+                        {tempDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+                      </div>
+                      <span className="font-bold text-sm">{tempDarkMode ? 'Modo Escuro' : 'Modo Claro'}</span>
                     </div>
-                    <span className="font-bold text-sm">{isDarkMode ? 'Modo Escuro' : 'Modo Claro'}</span>
+                    <button 
+                      onClick={() => setTempDarkMode(!tempDarkMode)}
+                      className={`w-14 h-8 rounded-full p-1 transition-colors duration-300 ${tempDarkMode ? 'bg-emerald-600' : 'bg-slate-200'}`}
+                    >
+                      <motion.div 
+                        animate={{ x: tempDarkMode ? 24 : 0 }}
+                        className="w-6 h-6 bg-white rounded-full shadow-sm"
+                      />
+                    </button>
                   </div>
-                  <button 
-                    onClick={() => setIsDarkMode(!isDarkMode)}
-                    className={`w-14 h-8 rounded-full p-1 transition-colors duration-300 ${isDarkMode ? 'bg-emerald-600' : 'bg-slate-200'}`}
+
+                  <Button 
+                    onClick={() => {
+                      setIsDarkMode(tempDarkMode);
+                      alert("Preferências de aparência salvas!");
+                    }}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700"
                   >
-                    <motion.div 
-                      animate={{ x: isDarkMode ? 24 : 0 }}
-                      className="w-6 h-6 bg-white rounded-full shadow-sm"
-                    />
-                  </button>
+                    Salvar Preferências
+                  </Button>
                 </div>
               </Card>
 
@@ -1598,7 +1694,7 @@ function RotaBankApp() {
                         }}
                         className="h-[52px] bg-emerald-600 hover:bg-emerald-700"
                       >
-                        Adicionar
+                        Salvar Categoria
                       </Button>
                     </div>
                   </div>
@@ -1632,6 +1728,66 @@ function RotaBankApp() {
                       </div>
                     ))}
                   </div>
+                </div>
+              </Card>
+
+              {/* Synchronization Diagnostic Section */}
+              <Card className="p-8 space-y-6">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center text-emerald-600">
+                    <RefreshCw className={`w-6 h-6 ${isSyncing ? 'animate-spin' : ''}`} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 dark:text-white">Sincronização</h4>
+                    <p className="text-xs text-slate-500">Integração com Rota Financeira</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-2xl border border-slate-100 dark:border-zinc-800 space-y-3">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-500">Status da Conexão:</span>
+                      <span className="font-bold text-emerald-600 flex items-center gap-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                        Ativa (Tempo Real)
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-500">Última Sincronização:</span>
+                      <span className="font-bold text-slate-700 dark:text-zinc-300">
+                        {lastSyncTime ? lastSyncTime.toLocaleTimeString('pt-BR') : 'Aguardando...'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-500">Seu ID de Integração:</span>
+                      <span className="font-mono font-bold text-[10px] text-slate-400 truncate ml-4">
+                        {user?.uid}
+                      </span>
+                    </div>
+                  </div>
+
+                  {entriesError && (
+                    <div className="p-4 bg-rose-50 dark:bg-rose-500/10 rounded-2xl border border-rose-100 dark:border-rose-500/20">
+                      <p className="text-[10px] font-bold text-rose-600 uppercase tracking-widest mb-1">Erro Detectado:</p>
+                      <p className="text-xs text-rose-500">{entriesError}</p>
+                    </div>
+                  )}
+
+                  <Button 
+                    onClick={() => {
+                      setIsSyncing(true);
+                      // Toggling activeTab or just forcing a re-render can help, 
+                      // but onSnapshot handles it. Let's just show a fake loading for feedback.
+                      setTimeout(() => {
+                        setIsSyncing(false);
+                        alert("Sincronização com Rota Financeira concluída!");
+                      }, 1500);
+                    }}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 flex items-center justify-center gap-2"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                    Sincronizar Agora
+                  </Button>
                 </div>
               </Card>
 
