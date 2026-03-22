@@ -1021,7 +1021,7 @@ function RotaBankApp() {
                     <BalanceCard 
                       title="Saldo Líquido" 
                       amount={availableBalance} 
-                      secondaryTitle={projectedBalance !== availableBalance ? "Saldo Previsto" : "Faturamento Rota Financeira"}
+                      secondaryTitle={projectedBalance !== availableBalance ? "Saldo Previsto" : "Lucro Real (Líquido)"}
                       secondaryAmount={projectedBalance !== availableBalance ? projectedBalance : totalIncome}
                       icon={Wallet} 
                       variant="emerald"
@@ -1264,7 +1264,7 @@ function RotaBankApp() {
                       ...entries.map(e => ({
                         id: e.id,
                         amount: parseCurrency(e.netAmount ?? e.valor_liquido ?? e.amount ?? 0),
-                        description: e.description || "Faturamento Rota Financeira",
+                        description: e.description || "Faturamento Líquido",
                         category: "Faturamento",
                         date: e.date || new Date().toISOString(),
                         type: "income" as const,
@@ -1829,11 +1829,11 @@ function RotaBankApp() {
 
                   {entries.length > 0 && (
                     <div className="p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-2xl border border-slate-100 dark:border-zinc-800">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Últimos Lançamentos Recebidos:</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Últimos Ganhos Líquidos:</p>
                       <div className="space-y-2">
                         {entries.slice(0, 3).map(e => (
                           <div key={e.id} className="flex justify-between text-[10px]">
-                            <span className="text-slate-600 dark:text-zinc-400 truncate max-w-[120px]">{e.description || 'Sem descrição'}</span>
+                            <span className="text-slate-600 dark:text-zinc-400 truncate max-w-[120px]">{e.description || 'Faturamento Líquido'}</span>
                             <span className="font-mono text-emerald-600">R$ {parseCurrency(e.netAmount ?? e.valor_liquido ?? e.amount ?? 0).toFixed(2)}</span>
                           </div>
                         ))}
