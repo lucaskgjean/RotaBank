@@ -7,7 +7,8 @@ export function BalanceCard({
   icon: Icon, 
   variant = "emerald",
   secondaryAmount,
-  secondaryTitle
+  secondaryTitle,
+  details
 }: { 
   title: string; 
   amount: number; 
@@ -15,6 +16,7 @@ export function BalanceCard({
   variant?: "emerald" | "slate" | "rose";
   secondaryAmount?: number;
   secondaryTitle?: string;
+  details?: { label: string; amount: number; color?: string }[];
 }) {
   const colors = {
     emerald: "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20",
@@ -44,12 +46,29 @@ export function BalanceCard({
         </div>
       )}
 
-      <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${variant === 'emerald' || variant === 'rose' ? 'text-white' : 'text-slate-800 dark:text-zinc-200'}`}>
-        {title}
-      </p>
-      <h2 className="text-3xl font-mono font-black tabular-nums">
-        {formatCurrency(amount)}
-      </h2>
+      <div className="space-y-1">
+        <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${variant === 'emerald' || variant === 'rose' ? 'text-white' : 'text-slate-800 dark:text-zinc-200'}`}>
+          {title}
+        </p>
+        <h2 className="text-3xl font-mono font-black tabular-nums">
+          {formatCurrency(amount)}
+        </h2>
+      </div>
+
+      {details && details.length > 0 && (
+        <div className="mt-6 pt-6 border-t border-white/10 dark:border-zinc-800 grid grid-cols-2 gap-4">
+          {details.map((detail, idx) => (
+            <div key={idx}>
+              <p className={`text-[8px] font-bold uppercase tracking-widest mb-0.5 ${variant === 'emerald' || variant === 'rose' ? 'text-white/70' : 'text-slate-500 dark:text-zinc-400'}`}>
+                {detail.label}
+              </p>
+              <p className={`text-xs font-mono font-bold ${detail.color || (variant === 'emerald' || variant === 'rose' ? 'text-white' : 'text-slate-900 dark:text-zinc-100')}`}>
+                {formatCurrency(detail.amount)}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }

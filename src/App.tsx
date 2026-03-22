@@ -161,6 +161,8 @@ interface Entry {
 interface Balance {
   totalNetAmount: number;
   valor_liquido: number;
+  totalGrossIncome?: number;
+  totalExpenses?: number;
   month: string;
   email?: string;
 }
@@ -1119,6 +1121,10 @@ function RotaBankApp() {
                       secondaryAmount={projectedBalance !== availableBalance ? projectedBalance : totalIncome}
                       icon={Wallet} 
                       variant="emerald"
+                      details={balance && (balance.totalGrossIncome !== undefined || balance.totalExpenses !== undefined) ? [
+                        { label: "Entradas", amount: balance.totalGrossIncome || 0 },
+                        { label: "Saídas", amount: balance.totalExpenses || 0 }
+                      ] : undefined}
                     />
                     
                     {/* Sync Warning */}
@@ -1172,7 +1178,9 @@ function RotaBankApp() {
 
                   <BalanceCard 
                     title="Gasto no Mês" 
-                    amount={monthlyExpenses} 
+                    amount={monthlyExpenses + (balance?.totalExpenses || 0)} 
+                    secondaryTitle={balance?.totalExpenses ? "Saídas Sincronizadas" : "Apenas Gastos Manuais"}
+                    secondaryAmount={balance?.totalExpenses || monthlyExpenses}
                     icon={TrendingDown}
                     variant="slate"
                   />
