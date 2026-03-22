@@ -231,18 +231,10 @@ const PAYMENT_METHODS = [
 const parseCurrency = (val: any): number => {
   if (typeof val === 'number') return val;
   if (typeof val === 'string') {
-    // Remove R$, spaces, and handle thousands separator (.) and decimal separator (,)
-    // Example: "R$ 1.234,56" -> "1234.56"
-    const clean = val.replace(/[R$\s]/g, '');
-    // If there's a comma and a dot, the dot is likely thousands and comma is decimal
-    if (clean.includes(',') && clean.includes('.')) {
-      return parseFloat(clean.replace(/\./g, '').replace(',', '.')) || 0;
-    }
-    // If there's only a comma, it's likely decimal
-    if (clean.includes(',')) {
-      return parseFloat(clean.replace(',', '.')) || 0;
-    }
-    return parseFloat(clean) || 0;
+    // Remove R$, spaces, and thousands separator (.) then replace decimal comma with dot
+    const clean = val.replace(/[R$\s.]/g, '').replace(',', '.');
+    const parsed = parseFloat(clean);
+    return isNaN(parsed) ? 0 : parsed;
   }
   return Number(val) || 0;
 };
@@ -714,10 +706,21 @@ function RotaBankApp() {
   const currentYear = now.getFullYear();
   const localMonthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
 
+  const syncedIncome = entries
+    .filter(e => {
+      const d = new Date(e.date || "");
+      if (isNaN(d.getTime())) return false;
+      // Use local month/year for comparison
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+    })
+    .reduce((acc, curr) => acc + parseCurrency(curr.netAmount ?? curr.valor_liquido ?? curr.amount ?? 0), 0);
+
   const isBalanceValid = balance && balance.month === localMonthStr;
+  
+  // Use balance document if valid, otherwise fallback to sum of current month entries
   const monthlyIncome = isBalanceValid 
     ? parseCurrency(balance.totalNetAmount ?? balance.valor_liquido ?? 0) 
-    : 0;
+    : syncedIncome;
 
   const totalIncome = monthlyIncome;
 
@@ -1791,7 +1794,7 @@ function RotaBankApp() {
                     <div className="flex justify-between items-center text-xs">
                       <span className="text-slate-500">Documento de Saldo:</span>
                       <span className={`font-bold ${balance ? 'text-emerald-600' : 'text-amber-600'}`}>
-                        {balance ? 'Encontrado' : 'Não Encontrado'}
+                        {balance ? (isBalanceValid ? 'Válido' : 'Mês Divergente') : 'Não Encontrado'}
                       </span>
                     </div>
                     {balance && (
@@ -1803,6 +1806,10 @@ function RotaBankApp() {
                         <div className="flex justify-between text-[10px]">
                           <span className="text-slate-400">Mês no Banco:</span>
                           <span className="font-mono text-slate-600 dark:text-zinc-400">{balance.month || 'Não informado'}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-slate-400">Soma dos Lançamentos:</span>
+                          <span className="font-mono text-emerald-600">R$ {syncedIncome.toFixed(2)}</span>
                         </div>
                       </div>
                     )}
