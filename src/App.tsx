@@ -30,7 +30,8 @@ import {
   Eye,
   EyeOff,
   PieChart,
-  RefreshCw
+  RefreshCw,
+  Users
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -247,10 +248,11 @@ function RotaBankApp() {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [tempDarkMode, setTempDarkMode] = useState(false);
-  const [activeTab, setActiveTab] = useState<"home" | "history" | "actions" | "reports" | "settings">("home");
-  const [transactionType, setTransactionType] = useState<"expense" | "income">("expense");
-  const [status, setStatus] = useState<"paid" | "pending">("paid");
-  const [paymentMethod, setPaymentMethod] = useState<string>("pix");
+  const [activeTab, setActiveTab] = useState<"home" | "history" | "actions" | "reports" | "settings" | "admin">("home");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [globalBalances, setGlobalBalances] = useState<Balance[]>([]);
+  const [globalEntries, setGlobalEntries] = useState<Entry[]>([]);
+  const [allUsers, setAllUsers] = useState<{ uid: string; email: string; displayName: string }[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [balance, setBalance] = useState<Balance | null>(null);
@@ -279,6 +281,9 @@ function RotaBankApp() {
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [time, setTime] = useState(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
+  const [status, setStatus] = useState<"paid" | "pending">("paid");
+  const [paymentMethod, setPaymentMethod] = useState("pix");
+  const [transactionType, setTransactionType] = useState<"income" | "expense">("expense");
 
   // Auth Listener
   useEffect(() => {
@@ -298,11 +303,18 @@ function RotaBankApp() {
             await setDoc(userRef, {
               email: user.email || "",
               displayName: user.displayName || "",
-              role: 'client'
+              role: 'client',
+              createdAt: new Date().toISOString()
             });
             console.log("User document created successfully.");
+            setIsAdmin(false);
           } else {
             console.log("User document already exists:", userSnap.data());
+            const userData = userSnap.data();
+            const isUserAdmin = userData.role === 'admin' || 
+                               user.email === "jeanlucasgontijo.15@gmail.com" || 
+                               user.email === "jeangontijoo@gmail.com";
+            setIsAdmin(isUserAdmin);
           }
         } catch (error) {
           console.error("Error ensuring user document exists:", error);
@@ -356,6 +368,11 @@ function RotaBankApp() {
       document.documentElement.classList.remove("dark");
     }
   }, [isDarkMode]);
+
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+  const localMonthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
 
   // Firestore Listeners
   useEffect(() => {
@@ -459,13 +476,52 @@ function RotaBankApp() {
       handleFirestoreError(error, OperationType.GET, `users/${user.uid}/custom_categories`);
     });
 
+    // Admin Listeners
+    let unsubscribeGlobalBalances: (() => void) | undefined;
+    let unsubscribeGlobalEntries: (() => void) | undefined;
+    let unsubscribeAllUsers: (() => void) | undefined;
+
+    if (isAdmin) {
+      console.log("Setting up admin listeners...");
+      
+      // Listen to all balances
+      unsubscribeGlobalBalances = onSnapshot(collection(db, "balances"), (snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          uid: doc.id,
+          ...doc.data()
+        })) as any[];
+        setGlobalBalances(data);
+      });
+
+      // Listen to all entries
+      unsubscribeGlobalEntries = onSnapshot(collection(db, "entries"), (snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Entry[];
+        setGlobalEntries(data);
+      });
+
+      // Listen to all users
+      unsubscribeAllUsers = onSnapshot(collection(db, "users"), (snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          uid: doc.id,
+          ...doc.data()
+        })) as any[];
+        setAllUsers(data);
+      });
+    }
+
     return () => {
       unsubscribeExpenses();
       unsubscribeEntries();
       unsubscribeBalance();
       unsubscribeCustomCategories();
+      if (unsubscribeGlobalBalances) unsubscribeGlobalBalances();
+      if (unsubscribeGlobalEntries) unsubscribeGlobalEntries();
+      if (unsubscribeAllUsers) unsubscribeAllUsers();
     };
-  }, [isAuthReady, user]);
+  }, [isAuthReady, user, isAdmin, localMonthStr, currentMonth, currentYear]);
 
   const handleLogin = async () => {
     setAuthError(null);
@@ -716,11 +772,6 @@ function RotaBankApp() {
     }
   };
 
-  const now = new Date();
-  const currentMonth = now.getMonth();
-  const currentYear = now.getFullYear();
-  const localMonthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
-
   const syncedIncome = entries
     .filter(e => {
       const d = new Date(e.date || "");
@@ -952,6 +1003,15 @@ function RotaBankApp() {
           >
             <Settings className="w-5 h-5" />
           </button>
+          {isAdmin && (
+            <button 
+              onClick={() => setActiveTab("admin")}
+              className={`p-2 rounded-xl transition-all ${activeTab === "admin" ? "text-amber-600 bg-amber-50 dark:bg-amber-500/10" : "text-slate-500 dark:text-zinc-400 hover:text-amber-600"}`}
+              title="Painel Admin"
+            >
+              <PieChart className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </header>
 
@@ -1909,6 +1969,137 @@ function RotaBankApp() {
                   >
                     Excluir Conta Permanentemente
                   </Button>
+                </div>
+              </Card>
+            </motion.div>
+          ) : activeTab === "admin" && isAdmin ? (
+            <motion.div 
+              key="admin"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-8"
+            >
+              <div className="flex flex-col gap-2">
+                <h2 className="text-3xl font-black font-display tracking-tight">Painel Administrativo</h2>
+                <p className="text-sm text-slate-500">Visão geral de todos os usuários e dados financeiros globais.</p>
+              </div>
+
+              {/* Global Stats */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                <Card className="p-6 bg-emerald-600 text-white border-none shadow-xl shadow-emerald-600/20">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="p-2 bg-white/20 rounded-xl">
+                      <TrendingUp className="w-5 h-5" />
+                    </div>
+                    <span className="text-xs font-bold uppercase tracking-widest opacity-80">Faturamento Global</span>
+                  </div>
+                  <div className="text-3xl font-black font-display">
+                    R$ {globalBalances.reduce((acc, curr) => acc + parseCurrency(curr.totalNetAmount ?? curr.valor_liquido ?? 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </div>
+                  <div className="mt-2 text-[10px] font-bold uppercase tracking-widest opacity-60">
+                    Soma de todos os saldos líquidos
+                  </div>
+                </Card>
+
+                <Card className="p-6 bg-slate-900 text-white border-none shadow-xl shadow-slate-900/20">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="p-2 bg-white/20 rounded-xl">
+                      <History className="w-5 h-5" />
+                    </div>
+                    <span className="text-xs font-bold uppercase tracking-widest opacity-80">Total de Lançamentos</span>
+                  </div>
+                  <div className="text-3xl font-black font-display">
+                    {globalEntries.length}
+                  </div>
+                  <div className="mt-2 text-[10px] font-bold uppercase tracking-widest opacity-60">
+                    Sincronizados do RotaFinanceira
+                  </div>
+                </Card>
+
+                <Card className="p-6 bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 shadow-xl">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="p-2 bg-amber-50 dark:bg-amber-500/10 rounded-xl text-amber-600">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Média por Usuário</span>
+                  </div>
+                  <div className="text-3xl font-black font-display text-slate-900 dark:text-white">
+                    R$ {allUsers.length > 0 ? (globalBalances.reduce((acc, curr) => acc + parseCurrency(curr.totalNetAmount ?? curr.valor_liquido ?? 0), 0) / allUsers.length).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00'}
+                  </div>
+                  <div className="mt-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    Baseado em {allUsers.length} usuários
+                  </div>
+                </Card>
+              </div>
+
+              {/* Users Table */}
+              <Card className="overflow-hidden border-slate-100 dark:border-slate-800 shadow-xl">
+                <div className="p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 flex items-center justify-center text-emerald-600">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-black font-display text-lg">Gerenciamento de Usuários</h3>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Lista completa de motoristas cadastrados</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-500/10 rounded-xl text-emerald-600 text-[10px] font-black uppercase tracking-widest">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                    {allUsers.length} Ativos
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50/50 dark:bg-slate-800/30">
+                        <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Usuário</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Saldo Líquido</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Status Sinc</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">ID</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {allUsers.map((u) => {
+                        const userBalance = globalBalances.find(b => b.uid === u.uid || b.email === u.email);
+                        const userEntriesCount = globalEntries.filter(e => e.uid === u.uid || e.email === u.email).length;
+                        
+                        return (
+                          <tr key={u.uid} className="hover:bg-slate-50 dark:hover:bg-zinc-800/30 transition-colors group">
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-zinc-800 flex items-center justify-center text-slate-500 font-bold text-xs">
+                                  {u.displayName?.charAt(0) || u.email?.charAt(0) || '?'}
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-sm font-bold text-slate-900 dark:text-white">{u.displayName || 'Sem Nome'}</span>
+                                  <span className="text-[10px] text-slate-400 font-medium">{u.email}</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <span className="text-sm font-black font-mono text-emerald-600">
+                                R$ {parseCurrency(userBalance?.totalNetAmount ?? userBalance?.valor_liquido ?? 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              <div className="flex flex-col items-center gap-1">
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter ${userBalance ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' : 'bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-500'}`}>
+                                  {userBalance ? 'Sincronizado' : 'Pendente'}
+                                </span>
+                                <span className="text-[8px] text-slate-400 font-bold uppercase">{userEntriesCount} lançamentos</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <span className="text-[9px] font-mono text-slate-300 group-hover:text-slate-500 transition-colors">{u.uid.substring(0, 8)}...</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </Card>
             </motion.div>
