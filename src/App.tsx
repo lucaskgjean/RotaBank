@@ -404,7 +404,7 @@ function RotaBankApp() {
     });
 
     // Entries Query (Rota Financeira)
-    // We now query by UID OR Email to ensure sync even if UIDs differ between apps
+    // We query by UID OR Email to ensure sync even if UIDs differ between apps
     const entriesQuery = query(
       collection(db, "entries"),
       or(
@@ -434,7 +434,7 @@ function RotaBankApp() {
     });
 
     // Balance Listener (Rota Financeira Consolidated)
-    // We now query by UID OR Email to ensure sync even if UIDs differ between apps
+    // The user specified the document ID is the UID, but we also query by uid field for safety
     const balanceQuery = query(
       collection(db, "balances"),
       or(
@@ -446,15 +446,31 @@ function RotaBankApp() {
     const unsubscribeBalance = onSnapshot(balanceQuery, (snapshot) => {
       if (!snapshot.empty) {
         // Find the best match (UID match preferred, then email)
-        const bestMatch = snapshot.docs.find(d => d.data().uid === user.uid) || snapshot.docs[0];
+        const bestMatch = snapshot.docs.find(d => d.data().uid === user.uid || d.id === user.uid) || snapshot.docs[0];
         console.log(`Balance snapshot received for ${user.email || user.uid}:`, bestMatch.data());
         setBalance(bestMatch.data() as Balance);
       } else {
-        console.log(`No balance document for ${user.email || user.uid}, defaulting to 0`);
-        setBalance({
-          totalNetAmount: 0,
-          valor_liquido: 0,
-          month: new Date().toISOString().substring(0, 7)
+        // Try fetching directly by document ID (UID) as requested by user
+        const balanceDocRef = doc(db, "balances", user.uid);
+        getDocFromServer(balanceDocRef).then((docSnap) => {
+          if (docSnap.exists()) {
+            console.log(`Balance document found by ID ${user.uid}:`, docSnap.data());
+            setBalance(docSnap.data() as Balance);
+          } else {
+            console.log(`No balance document for ${user.email || user.uid}, defaulting to 0`);
+            setBalance({
+              totalNetAmount: 0,
+              valor_liquido: 0,
+              month: new Date().toISOString().substring(0, 7)
+            });
+          }
+        }).catch((err) => {
+          console.error("Error fetching balance by ID:", err);
+          setBalance({
+            totalNetAmount: 0,
+            valor_liquido: 0,
+            month: new Date().toISOString().substring(0, 7)
+          });
         });
       }
     }, (error) => {

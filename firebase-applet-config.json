@@ -3,7 +3,7 @@
   "appId": "1:277383693862:web:209f4d53e1fa97b1ae88e7",
   "apiKey": "AIzaSyB5sk9819kKbD2_9v68KWWQSrXxHCWKxIQ",
   "authDomain": "rotafinanceira-aba24.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-a6c3169c-6ac4-4341-9def-171a8bebb74a",
+  "firestoreDatabaseId": "(default)",
   "storageBucket": "rotafinanceira-aba24.firebasestorage.app",
   "messagingSenderId": "277383693862",
   "measurementId": ""
