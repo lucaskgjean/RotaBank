@@ -74,13 +74,31 @@ service cloud.firestore {
     }
 
     match /entries/{entryId} {
-      allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
-      allow write: if isAuthenticated() && (request.resource.data.uid == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated() && (
+        resource.data.uid == request.auth.uid || 
+        resource.data.email == request.auth.token.email ||
+        isAdmin()
+      );
+      allow write: if isAuthenticated() && (
+        request.resource.data.uid == request.auth.uid || 
+        request.resource.data.email == request.auth.token.email ||
+        isAdmin()
+      );
     }
 
-    match /balances/{userId} {
-      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
-      allow write: if isAuthenticated() && (isOwner(userId) || isAdmin());
+    match /balances/{balanceId} {
+      allow read: if isAuthenticated() && (
+        resource.data.uid == request.auth.uid || 
+        resource.data.email == request.auth.token.email ||
+        balanceId == request.auth.uid ||
+        isAdmin()
+      );
+      allow write: if isAuthenticated() && (
+        request.resource.data.uid == request.auth.uid || 
+        request.resource.data.email == request.auth.token.email ||
+        balanceId == request.auth.uid ||
+        isAdmin()
+      );
     }
 
     match /users/{userId} {
