@@ -403,7 +403,12 @@ function RotaBankApp() {
         id: doc.id,
         ...doc.data()
       })) as Entry[];
-      setEntries(data);
+      // Sort by date descending
+      setEntries(data.sort((a, b) => {
+        const dateA = a.date ? new Date(a.date).getTime() : 0;
+        const dateB = b.date ? new Date(b.date).getTime() : 0;
+        return dateB - dateA;
+      }));
       setEntriesError(null);
       setLastSyncTime(new Date());
     }, (error) => {
@@ -707,10 +712,14 @@ function RotaBankApp() {
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
+  const localMonthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
 
-  const monthlyIncome = balance ? (balance.totalNetAmount ?? balance.valor_liquido ?? 0) : 0;
+  const isBalanceValid = balance && balance.month === localMonthStr;
+  const monthlyIncome = isBalanceValid 
+    ? parseCurrency(balance.totalNetAmount ?? balance.valor_liquido ?? 0) 
+    : 0;
 
-  const totalIncome = balance ? (balance.totalNetAmount ?? balance.valor_liquido ?? 0) : 0;
+  const totalIncome = monthlyIncome;
 
   const manualIncome = expenses
     .filter(e => e.type === "income" && e.status === "paid")
@@ -761,8 +770,9 @@ function RotaBankApp() {
     const groups: { [key: string]: number } = {};
     entries.forEach(entry => {
       const date = entry.date ? new Date(entry.date) : new Date();
-      const monthKey = date.toISOString().substring(0, 7); // YYYY-MM
-      const amount = entry.netAmount ?? entry.valor_liquido ?? entry.amount ?? 0;
+      // Use local month key instead of UTC to avoid timezone shifts at month boundaries
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const amount = parseCurrency(entry.netAmount ?? entry.valor_liquido ?? entry.amount ?? 0);
       groups[monthKey] = (groups[monthKey] || 0) + amount;
     });
     return Object.entries(groups)
@@ -1016,6 +1026,26 @@ function RotaBankApp() {
                       icon={Wallet} 
                       variant="emerald"
                     />
+                    
+                    {/* Sync Warning */}
+                    {(!balance || !isBalanceValid) && !entriesError && (
+                      <div className="absolute -top-2 -right-2 z-10">
+                        <div className="group relative">
+                          <div className="w-5 h-5 rounded-full bg-amber-500 flex items-center justify-center text-white shadow-lg animate-bounce cursor-help">
+                            <AlertCircle className="w-3 h-3" />
+                          </div>
+                          <div className="absolute right-0 top-6 w-64 p-4 bg-zinc-900 text-white text-[10px] rounded-xl opacity-0 group-hover:opacity-100 transition-opacity z-20 pointer-events-none shadow-2xl border border-zinc-800 space-y-2">
+                            <p className="font-bold text-amber-400 uppercase tracking-widest">Sincronização Necessária:</p>
+                            {!balance ? (
+                              <p>Nenhum saldo encontrado para este usuário no Rota Financeira.</p>
+                            ) : (
+                              <p>O saldo encontrado ({balance.month}) não corresponde ao mês atual ({localMonthStr}).</p>
+                            )}
+                            <p className="pt-2 border-t border-zinc-800">Acesse o <span className="text-emerald-400">Rota Financeira</span> e realize um novo fechamento para atualizar seu saldo.</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 px-3 py-1 bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-full shadow-sm">
                       <p className="text-[9px] font-bold text-slate-700 dark:text-zinc-300 uppercase tracking-widest whitespace-nowrap">
                         Mês Atual • Rota Financeira
@@ -1233,7 +1263,7 @@ function RotaBankApp() {
                       ...expenses.map(e => ({ ...e, source: 'rotabank' })),
                       ...entries.map(e => ({
                         id: e.id,
-                        amount: e.netAmount ?? e.valor_liquido ?? e.amount ?? 0,
+                        amount: parseCurrency(e.netAmount ?? e.valor_liquido ?? e.amount ?? 0),
                         description: e.description || "Faturamento Rota Financeira",
                         category: "Faturamento",
                         date: e.date || new Date().toISOString(),
@@ -1759,6 +1789,30 @@ function RotaBankApp() {
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-500">Documento de Saldo:</span>
+                      <span className={`font-bold ${balance ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {balance ? 'Encontrado' : 'Não Encontrado'}
+                      </span>
+                    </div>
+                    {balance && (
+                      <div className="pt-2 mt-2 border-t border-slate-200 dark:border-zinc-700 space-y-1">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-slate-400">Valor no Banco:</span>
+                          <span className="font-mono text-slate-600 dark:text-zinc-400">R$ {parseCurrency(balance.totalNetAmount ?? balance.valor_liquido ?? 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-slate-400">Mês no Banco:</span>
+                          <span className="font-mono text-slate-600 dark:text-zinc-400">{balance.month || 'Não informado'}</span>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-500">Lançamentos Sincronizados:</span>
+                      <span className="font-bold text-slate-700 dark:text-zinc-300">
+                        {entries.length} itens
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs">
                       <span className="text-slate-500">Seu ID de Integração:</span>
                       <span className="font-mono font-bold text-[10px] text-slate-400 truncate ml-4">
                         {user?.uid}
@@ -1770,6 +1824,20 @@ function RotaBankApp() {
                     <div className="p-4 bg-rose-50 dark:bg-rose-500/10 rounded-2xl border border-rose-100 dark:border-rose-500/20">
                       <p className="text-[10px] font-bold text-rose-600 uppercase tracking-widest mb-1">Erro Detectado:</p>
                       <p className="text-xs text-rose-500">{entriesError}</p>
+                    </div>
+                  )}
+
+                  {entries.length > 0 && (
+                    <div className="p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-2xl border border-slate-100 dark:border-zinc-800">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Últimos Lançamentos Recebidos:</p>
+                      <div className="space-y-2">
+                        {entries.slice(0, 3).map(e => (
+                          <div key={e.id} className="flex justify-between text-[10px]">
+                            <span className="text-slate-600 dark:text-zinc-400 truncate max-w-[120px]">{e.description || 'Sem descrição'}</span>
+                            <span className="font-mono text-emerald-600">R$ {parseCurrency(e.netAmount ?? e.valor_liquido ?? e.amount ?? 0).toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
 
