@@ -61,6 +61,7 @@ import {
   onSnapshot, 
   query, 
   where, 
+  or,
   orderBy,
   getDocFromServer,
   getDocs
@@ -152,6 +153,7 @@ interface Entry {
   valor_liquido?: number;
   amount?: number;
   uid: string;
+  email?: string;
   date?: string;
 }
 
@@ -159,6 +161,7 @@ interface Balance {
   totalNetAmount: number;
   valor_liquido: number;
   month: string;
+  email?: string;
 }
 
 // Error Boundary Component
@@ -384,13 +387,17 @@ function RotaBankApp() {
     });
 
     // Entries Query (Rota Financeira)
+    // We now query by UID OR Email to ensure sync even if UIDs differ between apps
     const entriesQuery = query(
       collection(db, "entries"),
-      where("uid", "==", user.uid)
+      or(
+        where("uid", "==", user.uid),
+        where("email", "==", user.email || "")
+      )
     );
 
     const unsubscribeEntries = onSnapshot(entriesQuery, (snapshot) => {
-      console.log(`Entries snapshot received for ${user.uid}. Docs: ${snapshot.docs.length}`);
+      console.log(`Entries snapshot received for ${user.email || user.uid}. Docs: ${snapshot.docs.length}`);
       const data = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
@@ -410,13 +417,23 @@ function RotaBankApp() {
     });
 
     // Balance Listener (Rota Financeira Consolidated)
-    const balanceRef = doc(db, "balances", user.uid);
-    const unsubscribeBalance = onSnapshot(balanceRef, (docSnap) => {
-      if (docSnap.exists()) {
-        console.log(`Balance snapshot received for ${user.uid}:`, docSnap.data());
-        setBalance(docSnap.data() as Balance);
+    // We now query by UID OR Email to ensure sync even if UIDs differ between apps
+    const balanceQuery = query(
+      collection(db, "balances"),
+      or(
+        where("uid", "==", user.uid),
+        where("email", "==", user.email || "")
+      )
+    );
+
+    const unsubscribeBalance = onSnapshot(balanceQuery, (snapshot) => {
+      if (!snapshot.empty) {
+        // Find the best match (UID match preferred, then email)
+        const bestMatch = snapshot.docs.find(d => d.data().uid === user.uid) || snapshot.docs[0];
+        console.log(`Balance snapshot received for ${user.email || user.uid}:`, bestMatch.data());
+        setBalance(bestMatch.data() as Balance);
       } else {
-        console.log(`No balance document for ${user.uid}, defaulting to 0`);
+        console.log(`No balance document for ${user.email || user.uid}, defaulting to 0`);
         setBalance({
           totalNetAmount: 0,
           valor_liquido: 0,
@@ -425,8 +442,6 @@ function RotaBankApp() {
       }
     }, (error) => {
       console.error("Balance listener error:", error);
-      // We don't strictly need to handleFirestoreError here if we want a silent fallback, 
-      // but let's log it for debugging.
       setEntriesError("Não foi possível carregar seu saldo consolidado.");
     });
 
